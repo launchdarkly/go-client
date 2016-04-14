@@ -31,7 +31,7 @@ type streamProcessor struct {
 
 type featurePatchData struct {
 	Path string  `json:"path"`
-	Data Feature `json:"data"`
+	Data FeatureFlag `json:"data"`
 }
 
 type featureDeleteData struct {
@@ -58,7 +58,7 @@ func (sp *streamProcessor) startOnce(ch chan<- bool) {
 		event := <-sp.stream.Events
 		switch event.Event() {
 		case putEvent:
-			var features map[string]*Feature
+			var features map[string]*FeatureFlag
 			if err := json.Unmarshal([]byte(event.Data()), &features); err != nil {
 				sp.config.Logger.Printf("Unexpected error unmarshalling feature json: %+v", err)
 			} else {
@@ -122,7 +122,7 @@ func (sp *streamProcessor) subscribe() {
 	defer sp.Unlock()
 
 	if sp.stream == nil {
-		req, _ := http.NewRequest("GET", sp.config.StreamUri+"/features", nil)
+		req, _ := http.NewRequest("GET", sp.config.StreamUri+"/flags", nil)
 		req.Header.Add("Authorization", "api_key "+sp.apiKey)
 		req.Header.Add("User-Agent", "GoClient/"+Version)
 

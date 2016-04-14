@@ -269,9 +269,9 @@ func (client *LDClient) sendFlagRequestEvent(key string, user User, value, defau
 }
 
 func (client *LDClient) evaluate(key string, user User, defaultVal interface{}) (interface{}, error) {
-	var feature Feature
+	var feature FeatureFlag
 	var storeErr error
-	var featurePtr *Feature
+	var featurePtr *FeatureFlag
 
 	if !client.Initialized() {
 		return defaultVal, ErrClientNotInitialized
@@ -290,11 +290,17 @@ func (client *LDClient) evaluate(key string, user User, defaultVal interface{}) 
 		return defaultVal, errors.New("Unknown feature key. Verify that this feature key exists. Returning default value.")
 	}
 
-	value, pass := feature.Evaluate(user)
-
-	if pass {
-		return defaultVal, nil
+	if feature.On {
+		value, err := feature.EvaluateExplain(user)
+		if err != nil {
+			return defaultVal, nil
+		}
+		return value, nil
 	}
 
-	return value, nil
+	if feature.OffVariation != nil && *feature.OffVariation < len(feature.Variations) {
+		value := feature.Variations[*feature.OffVariation]
+		return value, nil
+	}
+	return defaultVal, nil
 }
