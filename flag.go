@@ -8,6 +8,10 @@ import (
 	"strconv"
 )
 
+const (
+	long_scale = float32(0xFFFFFFFFFFFFFFF)
+)
+
 type FeatureFlag struct {
 	Key          string        `json:"key" bson:"key"`
 	Version      int           `json:"version" bson:"version"`
@@ -19,6 +23,7 @@ type FeatureFlag struct {
 	Fallthrough  Rule          `json:"fallthrough" bson:"fallthrough"`
 	OffVariation *int          `json:"offVariation" bson:"offVariation"`
 	Variations   []interface{} `json:"variations" bson:"variations"`
+	Deleted      bool          `json:"deleted,omitempty" bson:"deleted"`
 }
 
 // Expresses a set of AND-ed matching conditions for a user, along with
