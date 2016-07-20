@@ -8,14 +8,15 @@ import (
 )
 
 type publication struct {
-	id, event, data string
-	retry           int64
+	id, event, data, comment string
+	retry                    int64
 }
 
-func (s *publication) Id() string    { return s.id }
-func (s *publication) Event() string { return s.event }
-func (s *publication) Data() string  { return s.data }
-func (s *publication) Retry() int64  { return s.retry }
+func (s *publication) Id() string      { return s.id }
+func (s *publication) Event() string   { return s.event }
+func (s *publication) Data() string    { return s.data }
+func (s *publication) Retry() int64    { return s.retry }
+func (s *publication) Comment() string { return s.comment }
 
 // A Decoder is capable of reading Events from a stream.
 type Decoder struct {
