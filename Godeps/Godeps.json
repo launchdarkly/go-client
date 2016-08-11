@@ -2,25 +2,10 @@
 	"ImportPath": "github.com/launchdarkly/go-client",
 	"GoVersion": "go1.5",
 	"GodepVersion": "v74",
-	"Packages": [
-		"./..."
-	],
 	"Deps": [
-		{
-			"ImportPath": "github.com/davecgh/go-spew/spew",
-			"Rev": "5215b55f46b2b919f50a1df0eaa5886afe4e3b3d"
-		},
 		{
 			"ImportPath": "github.com/facebookgo/httpcontrol",
 			"Rev": "ccde4420e1fee9af5da365cb76075b95683f39a6"
-		},
-		{
-			"ImportPath": "github.com/garyburd/redigo/internal",
-			"Rev": "836b6e58b3358112c8291565d01c35b8764070d7"
-		},
-		{
-			"ImportPath": "github.com/garyburd/redigo/redis",
-			"Rev": "836b6e58b3358112c8291565d01c35b8764070d7"
 		},
 		{
 			"ImportPath": "github.com/gregjones/httpcache",
@@ -42,6 +27,45 @@
 			"ImportPath": "github.com/stretchr/testify/assert",
 			"Comment": "v1.1.3-6-g6fe211e",
 			"Rev": "6fe211e493929a8aac0469b93f28b1d0688a9a3a"
+		},
+		{
+			"ImportPath": "gopkg.in/bsm/ratelimit.v1",
+			"Rev": "db14e161995a5177acef654cb0dd785e8ee8bc22"
+		},
+		{
+			"ImportPath": "gopkg.in/redis.v4",
+			"Comment": "v4.1.2",
+			"Rev": "0b8675fa4582105c8f54e08d3e0e6ad8f7df0546"
+		},
+		{
+			"ImportPath": "gopkg.in/redis.v4/internal",
+			"Comment": "v4.1.2",
+			"Rev": "0b8675fa4582105c8f54e08d3e0e6ad8f7df0546"
+		},
+		{
+			"ImportPath": "gopkg.in/redis.v4/internal/consistenthash",
+			"Comment": "v4.1.2",
+			"Rev": "0b8675fa4582105c8f54e08d3e0e6ad8f7df0546"
+		},
+		{
+			"ImportPath": "gopkg.in/redis.v4/internal/errors",
+			"Comment": "v4.1.2",
+			"Rev": "0b8675fa4582105c8f54e08d3e0e6ad8f7df0546"
+		},
+		{
+			"ImportPath": "gopkg.in/redis.v4/internal/hashtag",
+			"Comment": "v4.1.2",
+			"Rev": "0b8675fa4582105c8f54e08d3e0e6ad8f7df0546"
+		},
+		{
+			"ImportPath": "gopkg.in/redis.v4/internal/pool",
+			"Comment": "v4.1.2",
+			"Rev": "0b8675fa4582105c8f54e08d3e0e6ad8f7df0546"
+		},
+		{
+			"ImportPath": "gopkg.in/redis.v4/internal/proto",
+			"Comment": "v4.1.2",
+			"Rev": "0b8675fa4582105c8f54e08d3e0e6ad8f7df0546"
 		}
 	]
 }
