@@ -21,7 +21,20 @@ type RedisFeatureStore struct {
 
 const initKey = "$initialized$"
 
+func NewRedisFeatureStoreWithFailoverOptions(failoverOpts *redis.FailoverOptions, prefix string, timeout time.Duration, logger *log.Logger) *RedisFeatureStore {
+	client := redis.NewFailoverClient(failoverOpts)
+
+	return newRedisFeatureStoreWithClient(client, prefix, timeout, logger)
+
+}
+
 func NewRedisFeatureStoreWithOptions(opts *redis.Options, prefix string, timeout time.Duration, logger *log.Logger) *RedisFeatureStore {
+	client := redis.NewClient(opts)
+
+	return newRedisFeatureStoreWithClient(client, prefix, timeout, logger)
+}
+
+func newRedisFeatureStoreWithClient(client *redis.Client, prefix string, timeout time.Duration, logger *log.Logger) *RedisFeatureStore {
 	var c *cache.Cache
 
 	if logger == nil {
@@ -40,7 +53,7 @@ func NewRedisFeatureStoreWithOptions(opts *redis.Options, prefix string, timeout
 
 	store := RedisFeatureStore{
 		prefix:  prefix,
-		client:  redis.NewClient(opts),
+		client:  client,
 		cache:   c,
 		timeout: timeout,
 		logger:  logger,
