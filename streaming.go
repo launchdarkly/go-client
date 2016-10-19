@@ -196,5 +196,5 @@ func (sp *streamProcessor) close() {
 
 func (sp *streamProcessor) IsConnected() bool {
 	then := time.Now().Add(-deadConnectionInterval)
-	return sp.lastHeartbeat.Before(then)
+	return sp.lastHeartbeat.After(then)
 }
