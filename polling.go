@@ -36,6 +36,11 @@ func (pp *pollingProcessor) start(ch chan<- bool) {
 				pp.config.Logger.Printf("Polling Processor closed.")
 				return
 			default:
+				if !pp.shouldPoll() {
+					time.Sleep(pp.config.PollInterval)
+					continue
+				}
+
 				then := time.Now()
 				err := pp.poll()
 				if err == nil {
