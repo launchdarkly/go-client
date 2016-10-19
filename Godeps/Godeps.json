@@ -28,7 +28,7 @@
 		},
 		{
 			"ImportPath": "github.com/launchdarkly/eventsource",
-			"Rev": "7a80b789e2ea45aa2f320c59203c306e8ded8f06"
+			"Rev": "d9073f09a9fcab08b876e7f90c99a0f07273c5d6"
 		},
 		{
 			"ImportPath": "github.com/patrickmn/go-cache",

@@ -12,14 +12,16 @@ type pollingProcessor struct {
 	setInitializedOnce sync.Once
 	isInitialized      bool
 	quit               chan bool
+	shouldPoll         func() bool
 }
 
-func newPollingProcessor(config Config, requestor *requestor) updateProcessor {
+func newPollingProcessor(config Config, requestor *requestor) *pollingProcessor {
 	pp := &pollingProcessor{
-		store:     config.FeatureStore,
-		requestor: requestor,
-		config:    config,
-		quit:      make(chan bool),
+		store:      config.FeatureStore,
+		requestor:  requestor,
+		config:     config,
+		quit:       make(chan bool),
+		shouldPoll: func() bool { return true },
 	}
 
 	return pp
