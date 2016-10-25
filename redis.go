@@ -299,7 +299,7 @@ func (store *RedisFeatureStore) getAllItemsFromLocalCache() map[string]*FeatureF
 	all := make(map[string]*FeatureFlag)
 	items := store.cache.Items()
 	//The call to Items() is safe, but the map we get is not a copy, so we use it under lock
-	store.cacheLock.Lock()
+	store.cacheLock.RLock()
 	defer store.cacheLock.RUnlock()
 	for k, f := range items {
 		if feature, ok := f.Object.(FeatureFlag); ok {
