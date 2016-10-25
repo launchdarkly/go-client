@@ -140,6 +140,8 @@ func (store *RedisFeatureStore) Get(key string) (*FeatureFlag, error) {
 	}
 
 	if store.cache != nil {
+		store.cacheLock.Lock()
+		defer store.cacheLock.Unlock()
 		store.cache.Set(key, feature, store.timeout)
 	}
 
