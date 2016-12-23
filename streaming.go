@@ -2,12 +2,13 @@ package ldclient
 
 import (
 	"encoding/json"
-	es "github.com/launchdarkly/eventsource"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	es "github.com/launchdarkly/eventsource"
 )
 
 const (
@@ -131,7 +132,7 @@ func (sp *streamProcessor) subscribe() {
 		req.Header.Add("User-Agent", "GoClient/"+Version)
 		sp.config.Logger.Printf("Connecting to LaunchDarkly stream using URL: %s", req.URL.String())
 
-		if stream, err := es.SubscribeWithRequest("", req); err != nil {
+		if stream, err := es.SubscribeWithRequest("", req, 5*time.Minute); err != nil {
 			sp.config.Logger.Printf("Error subscribing to stream: %+v using URL: %s", err, req.URL.String())
 		} else {
 			sp.stream = stream

@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"time"
 )
@@ -25,8 +26,14 @@ type Stream struct {
 	// action when an error is encountered. The stream will always attempt to continue,
 	// even if that involves reconnecting to the server.
 	Errors chan error
+	// Comments emits any comment lines encountered while reading from the stream
+	Comments chan string
 	// Logger is a logger that, when set, will be used for logging debug messages
 	Logger *log.Logger
+	// The maximum time to wait between reconnection attempts
+	maxReconnectionTime time.Duration
+	// Force a reconnect if no message is received in this period of time
+	reconnectAfter time.Duration
 }
 
 type SubscriptionError struct {
@@ -40,23 +47,26 @@ func (e SubscriptionError) Error() string {
 
 // Subscribe to the Events emitted from the specified url.
 // If lastEventId is non-empty it will be sent to the server in case it can replay missed events.
-func Subscribe(url, lastEventId string) (*Stream, error) {
+func Subscribe(url, lastEventId string, reconnectAfter time.Duration) (*Stream, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	return SubscribeWithRequest(lastEventId, req)
+	return SubscribeWithRequest(lastEventId, req, reconnectAfter)
 }
 
 // SubscribeWithRequest will take an http.Request to setup the stream, allowing custom headers
 // to be specified, authentication to be configured, etc.
-func SubscribeWithRequest(lastEventId string, req *http.Request) (*Stream, error) {
+func SubscribeWithRequest(lastEventId string, req *http.Request, reconnectAfter time.Duration) (*Stream, error) {
 	stream := &Stream{
-		req:         req,
-		lastEventId: lastEventId,
-		retry:       (time.Millisecond * 3000),
-		Events:      make(chan Event),
-		Errors:      make(chan error),
+		req:                 req,
+		lastEventId:         lastEventId,
+		retry:               (time.Millisecond * 3000),
+		Events:              make(chan Event),
+		Errors:              make(chan error),
+		Comments:            make(chan string),
+		maxReconnectionTime: (time.Millisecond * 30000),
+		reconnectAfter:      reconnectAfter,
 	}
 	stream.c.CheckRedirect = checkRedirect
 
@@ -103,28 +113,66 @@ func (stream *Stream) connect() (r io.ReadCloser, err error) {
 	return
 }
 
+func (stream *Stream) backoffWithJitter(attempts int) time.Duration {
+	retry := stream.retry.Nanoseconds()
+	max := stream.maxReconnectionTime.Nanoseconds()
+
+	exp := pow(2, attempts)
+
+	jitterVal := retry * int64(exp)
+
+	if exp == 0 || jitterVal > max || jitterVal <= 0 {
+		jitterVal = max
+	}
+
+	return time.Duration(jitterVal/2 + rand.Int63n(jitterVal)/2)
+}
+
+// Integer power: compute a**b, from Knuth
+func pow(a, b int) int {
+	p := 1
+	for b > 0 {
+		if b&1 != 0 {
+			p *= a
+		}
+		b >>= 1
+		a *= a
+	}
+	return p
+}
+
 func (stream *Stream) stream(r io.ReadCloser) {
+	reconnectAttempts := 1
 	defer r.Close()
 	dec := NewDecoder(r)
 	for {
-		ev, err := dec.Decode()
+		ev, comment, err := dec.Decode(stream.reconnectAfter)
 
 		if err != nil {
 			stream.Errors <- err
 			// respond to all errors by reconnecting and trying again
 			break
 		}
-		pub := ev.(*publication)
-		if pub.Retry() > 0 {
-			stream.retry = time.Duration(pub.Retry()) * time.Millisecond
+
+		if comment != nil {
+			stream.Comments <- *comment
 		}
-		if len(pub.Id()) > 0 {
-			stream.lastEventId = pub.Id()
+
+		if pub, ok := ev.(*publication); ok {
+			if pub.Retry() > 0 {
+				stream.retry = time.Duration(pub.Retry()) * time.Millisecond
+			}
+			if len(pub.Id()) > 0 {
+				stream.lastEventId = pub.Id()
+			}
+			stream.Events <- ev
+		} else {
+			stream.Logger.Printf("Received invalid event")
 		}
-		stream.Events <- ev
 	}
-	backoff := stream.retry
 	for {
+		backoff := stream.backoffWithJitter(reconnectAttempts)
+		reconnectAttempts++
 		time.Sleep(backoff)
 		if stream.Logger != nil {
 			stream.Logger.Printf("Reconnecting in %0.4f secs\n", backoff.Seconds())
@@ -139,6 +187,5 @@ func (stream *Stream) stream(r io.ReadCloser) {
 			break
 		}
 		stream.Errors <- err
-		backoff *= 2
 	}
 }
