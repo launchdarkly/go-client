@@ -4,7 +4,7 @@ LaunchDarkly SDK for Go
 [![Circle CI](https://circleci.com/gh/launchdarkly/go-client.svg?style=svg)](https://circleci.com/gh/launchdarkly/go-client)
 
 
-This is probably not the branch you are looking for!
+This is a legacy branch of the LaunchDarkly client
 ----------------
 LaunchDarkly uses [gopkg.in](http://labix.org/gopkg.in) to better keep track of API changes. 
 We maintain master as the default branch for this repository to retain backward compatibility for existing installations. The [v2](https://github.com/launchdarkly/go-client/tree/v2) branch is the currently released SDK.
