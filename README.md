@@ -3,6 +3,25 @@ LaunchDarkly SDK for Go
 
 [![Circle CI](https://circleci.com/gh/launchdarkly/go-client.svg?style=svg)](https://circleci.com/gh/launchdarkly/go-client)
 
+
+This is a legacy branch of the LaunchDarkly client
+----------------
+LaunchDarkly uses [gopkg.in](http://labix.org/gopkg.in) to better keep track of API changes. 
+We maintain master as the default branch for this repository to retain backward compatibility for existing installations. The [v2](https://github.com/launchdarkly/go-client/tree/v2) branch is the currently released SDK.
+
+This means that unless you know you are a legacy LaunchDarkly V1 customer you should use this command to install LaunchDarkly:
+
+```
+go get gopkg.in/launchdarkly/go-client.v2
+```
+And this import statement:
+
+```
+import ld "gopkg.in/launchdarkly/go-client.v2"
+```
+Even if you are a V1 customer you can and should switch to the V2 client. If you're not sure about which client to use, please contact us at support@launchdarkly.com
+
+
 Quick setup
 -----------
 
