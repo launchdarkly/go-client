@@ -12,14 +12,16 @@ type pollingProcessor struct {
 	setInitializedOnce sync.Once
 	isInitialized      bool
 	quit               chan bool
+	shouldPoll         func() bool
 }
 
-func newPollingProcessor(config Config, requestor *requestor) updateProcessor {
+func newPollingProcessor(config Config, requestor *requestor) *pollingProcessor {
 	pp := &pollingProcessor{
-		store:     config.FeatureStore,
-		requestor: requestor,
-		config:    config,
-		quit:      make(chan bool),
+		store:      config.FeatureStore,
+		requestor:  requestor,
+		config:     config,
+		quit:       make(chan bool),
+		shouldPoll: func() bool { return true },
 	}
 
 	return pp
@@ -34,6 +36,11 @@ func (pp *pollingProcessor) start(ch chan<- bool) {
 				pp.config.Logger.Printf("Polling Processor closed.")
 				return
 			default:
+				if !pp.shouldPoll() {
+					time.Sleep(pp.config.PollInterval)
+					continue
+				}
+
 				then := time.Now()
 				err := pp.poll()
 				if err == nil {

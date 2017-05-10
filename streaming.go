@@ -3,7 +3,6 @@ package ldclient
 import (
 	"encoding/json"
 	es "github.com/launchdarkly/eventsource"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,6 +26,7 @@ type streamProcessor struct {
 	setInitializedOnce sync.Once
 	isInitialized      bool
 	sync.RWMutex
+	lastHeartbeat time.Time
 }
 
 type featurePatchData struct {
@@ -39,6 +39,10 @@ type featureDeleteData struct {
 	Version int    `json:"version"`
 }
 
+// If we do not receive a heartbeat in this many seconds,
+// we can assume the connection has been lost
+var deadConnectionInterval = 300 * time.Second
+
 func (sp *streamProcessor) initialized() bool {
 	return sp.isInitialized
 }
@@ -47,6 +51,7 @@ func (sp *streamProcessor) start(ch chan<- bool) {
 	sp.config.Logger.Printf("Starting LaunchDarkly streaming connection")
 	go sp.startOnce(ch)
 	go sp.errors()
+	go sp.heartbeats()
 }
 
 func (sp *streamProcessor) startOnce(ch chan<- bool) {
@@ -67,6 +72,7 @@ func (sp *streamProcessor) startOnce(ch chan<- bool) {
 				sp.setInitializedOnce.Do(func() {
 					sp.config.Logger.Printf("Started LaunchDarkly streaming client")
 					sp.isInitialized = true
+					sp.lastHeartbeat = time.Now()
 					ch <- true
 				})
 			}
@@ -93,6 +99,7 @@ func (sp *streamProcessor) startOnce(ch chan<- bool) {
 				sp.setInitializedOnce.Do(func() {
 					sp.config.Logger.Printf("Started LaunchDarkly streaming client")
 					sp.isInitialized = true
+					sp.lastHeartbeat = time.Now()
 					ch <- true
 				})
 			}
@@ -110,7 +117,7 @@ func (sp *streamProcessor) startOnce(ch chan<- bool) {
 	}
 }
 
-func newStreamProcessor(sdkKey string, config Config, requestor *requestor) updateProcessor {
+func newStreamProcessor(sdkKey string, config Config, requestor *requestor) *streamProcessor {
 	sp := &streamProcessor{
 		store:     config.FeatureStore,
 		config:    config,
@@ -161,15 +168,33 @@ func (sp *streamProcessor) errors() {
 		}
 		err := <-sp.stream.Errors
 
-		if err != io.EOF {
+		if err != nil {
 			sp.config.Logger.Printf("Error encountered processing stream: %+v", err)
 		}
-		if err != nil {
+	}
+}
+
+func (sp *streamProcessor) heartbeats() {
+	for {
+		subscribed := sp.checkSubscribe()
+		if !subscribed {
+			time.Sleep(2 * time.Second)
+			continue
 		}
+		<-sp.stream.Comments
+
+		sp.Lock()
+		sp.lastHeartbeat = time.Now()
+		sp.Unlock()
 	}
 }
 
 func (sp *streamProcessor) close() {
 	// TODO : the EventSource library doesn't support close() yet.
 	// when it does, call it here
+}
+
+func (sp *streamProcessor) IsConnected() bool {
+	then := time.Now().Add(-deadConnectionInterval)
+	return sp.lastHeartbeat.After(then)
 }

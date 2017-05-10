@@ -29,20 +29,21 @@ type LDClient struct {
 
 // Exposes advanced configuration options for the LaunchDarkly client.
 type Config struct {
-	BaseUri          string
-	StreamUri        string
-	EventsUri        string
-	Capacity         int
-	FlushInterval    time.Duration
-	SamplingInterval int32
-	PollInterval     time.Duration
-	Logger           *log.Logger
-	Timeout          time.Duration
-	Stream           bool
-	FeatureStore     FeatureStore
-	UseLdd           bool
-	SendEvents       bool
-	Offline          bool
+	BaseUri                string
+	StreamUri              string
+	EventsUri              string
+	Capacity               int
+	FlushInterval          time.Duration
+	SamplingInterval       int32
+	PollInterval           time.Duration
+	Logger                 *log.Logger
+	Timeout                time.Duration
+	Stream                 bool
+	StreamWithFallbackPoll bool
+	FeatureStore           FeatureStore
+	UseLdd                 bool
+	SendEvents             bool
+	Offline                bool
 }
 
 type updateProcessor interface {
@@ -57,19 +58,20 @@ type updateProcessor interface {
 //   var config = DefaultConfig
 //   config.Capacity = 2000
 var DefaultConfig = Config{
-	BaseUri:       "https://app.launchdarkly.com",
-	StreamUri:     "https://stream.launchdarkly.com",
-	EventsUri:     "https://events.launchdarkly.com",
-	Capacity:      1000,
-	FlushInterval: 5 * time.Second,
-	PollInterval:  1 * time.Second,
-	Logger:        log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
-	Timeout:       3000 * time.Millisecond,
-	Stream:        true,
-	FeatureStore:  nil,
-	UseLdd:        false,
-	SendEvents:    true,
-	Offline:       false,
+	BaseUri:                "https://app.launchdarkly.com",
+	StreamUri:              "https://stream.launchdarkly.com",
+	EventsUri:              "https://events.launchdarkly.com",
+	Capacity:               1000,
+	FlushInterval:          5 * time.Second,
+	PollInterval:           1 * time.Second,
+	Logger:                 log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
+	Timeout:                3000 * time.Millisecond,
+	Stream:                 true,
+	StreamWithFallbackPoll: true,
+	FeatureStore:           nil,
+	UseLdd:                 false,
+	SendEvents:             true,
+	Offline:                false,
 }
 
 var ErrInitializationTimeout = errors.New("Timeout encountered waiting for LaunchDarkly client initialization")
@@ -116,7 +118,11 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 
 	requestor := newRequestor(sdkKey, config)
 
-	if config.Stream {
+	if config.StreamWithFallbackPoll {
+		sp := newStreamProcessor(sdkKey, config, requestor)
+		pp := newPollingProcessor(config, requestor)
+		client.updateProcessor = newFallbackProcessor(config, sp, pp)
+	} else if config.Stream {
 		client.updateProcessor = newStreamProcessor(sdkKey, config, requestor)
 	} else {
 		client.updateProcessor = newPollingProcessor(config, requestor)
@@ -234,7 +240,7 @@ func (client *LDClient) AllFlags(user User) map[string]interface{} {
 	}
 	for _, flag := range flags {
 		result, _ := client.evalFlag(*flag, user)
-		results[flag.Key] =  result
+		results[flag.Key] = result
 	}
 
 	return results
@@ -382,14 +388,14 @@ func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) 
 	}
 
 	result, prereqEvents := client.evalFlag(feature, user)
-		if !client.IsOffline() {
-			for _, event := range prereqEvents {
-				err := client.eventProcessor.sendEvent(event)
-				if err != nil {
-					client.config.Logger.Printf("WARN: Error sending feature request event to LaunchDarkly: %+v", err)
-				}
+	if !client.IsOffline() {
+		for _, event := range prereqEvents {
+			err := client.eventProcessor.sendEvent(event)
+			if err != nil {
+				client.config.Logger.Printf("WARN: Error sending feature request event to LaunchDarkly: %+v", err)
 			}
 		}
+	}
 	if result != nil {
 		return result, &feature.Version, nil
 	}
