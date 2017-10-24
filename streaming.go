@@ -2,12 +2,14 @@ package ldclient
 
 import (
 	"encoding/json"
-	es "github.com/launchdarkly/eventsource"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	es "github.com/launchdarkly/eventsource"
 )
 
 const (
@@ -27,6 +29,7 @@ type streamProcessor struct {
 	setInitializedOnce sync.Once
 	isInitialized      bool
 	sync.RWMutex
+	status uint32
 }
 
 type featurePatchData struct {
@@ -51,6 +54,10 @@ func (sp *streamProcessor) start(ch chan<- bool) {
 
 func (sp *streamProcessor) startOnce(ch chan<- bool) {
 	for {
+		if atomic.LoadUint32(&sp.status) == 1 {
+			break
+		}
+
 		subscribed := sp.checkSubscribe()
 		if !subscribed {
 			time.Sleep(2 * time.Second)
@@ -154,6 +161,10 @@ func (sp *streamProcessor) checkSubscribe() bool {
 
 func (sp *streamProcessor) errors() {
 	for {
+		if atomic.LoadUint32(&sp.status) == 1 {
+			break
+		}
+
 		subscribed := sp.checkSubscribe()
 		if !subscribed {
 			time.Sleep(2 * time.Second)
@@ -170,6 +181,7 @@ func (sp *streamProcessor) errors() {
 }
 
 func (sp *streamProcessor) close() {
+	atomic.CompareAndSwapUint32(&sp.status, 0, 1)
 	// TODO : the EventSource library doesn't support close() yet.
 	// when it does, call it here
 }
