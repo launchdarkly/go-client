@@ -27,11 +27,11 @@ type InMemoryFeatureStore struct {
 	features      map[string]*FeatureFlag
 	isInitialized bool
 	sync.RWMutex
-	logger *log.Logger
+	logger Logger
 }
 
 // Creates a new in-memory FeatureStore instance.
-func NewInMemoryFeatureStore(logger *log.Logger) *InMemoryFeatureStore {
+func NewInMemoryFeatureStore(logger Logger) *InMemoryFeatureStore {
 	if logger == nil {
 		logger = log.New(os.Stderr, "[LaunchDarkly InMemoryFeatureStore]", log.LstdFlags)
 	}

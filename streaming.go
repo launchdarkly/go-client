@@ -2,12 +2,13 @@ package ldclient
 
 import (
 	"encoding/json"
-	es "github.com/launchdarkly/eventsource"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	es "github.com/launchdarkly/eventsource"
 )
 
 const (
@@ -135,7 +136,8 @@ func (sp *streamProcessor) subscribe() {
 			sp.config.Logger.Printf("Error subscribing to stream: %+v using URL: %s", err, req.URL.String())
 		} else {
 			sp.stream = stream
-			sp.stream.Logger = sp.config.Logger
+			//TODO: handle steam.Logger
+			//sp.stream.Logger = sp.config.Logger
 		}
 	}
 }
