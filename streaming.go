@@ -136,8 +136,7 @@ func (sp *streamProcessor) subscribe() {
 			sp.config.Logger.Printf("Error subscribing to stream: %+v using URL: %s", err, req.URL.String())
 		} else {
 			sp.stream = stream
-			//TODO: handle steam.Logger
-			//sp.stream.Logger = sp.config.Logger
+			sp.stream.Logger = sp.config.Logger
 		}
 	}
 }

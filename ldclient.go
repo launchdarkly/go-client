@@ -12,6 +12,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	es "github.com/launchdarkly/eventsource"
 )
 
 const Version string = "2.0.0"
@@ -36,18 +38,13 @@ type Config struct {
 	FlushInterval    time.Duration
 	SamplingInterval int32
 	PollInterval     time.Duration
-	Logger           Logger
+	Logger           es.Logger
 	Timeout          time.Duration
 	Stream           bool
 	FeatureStore     FeatureStore
 	UseLdd           bool
 	SendEvents       bool
 	Offline          bool
-}
-
-type Logger interface {
-	Println(...interface{})
-	Printf(string, ...interface{})
 }
 
 type updateProcessor interface {

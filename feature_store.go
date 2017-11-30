@@ -4,6 +4,8 @@ import (
 	"log"
 	"os"
 	"sync"
+
+	es "github.com/launchdarkly/eventsource"
 )
 
 // A data structure that maintains the live
@@ -27,11 +29,11 @@ type InMemoryFeatureStore struct {
 	features      map[string]*FeatureFlag
 	isInitialized bool
 	sync.RWMutex
-	logger Logger
+	logger es.Logger
 }
 
 // Creates a new in-memory FeatureStore instance.
-func NewInMemoryFeatureStore(logger Logger) *InMemoryFeatureStore {
+func NewInMemoryFeatureStore(logger es.Logger) *InMemoryFeatureStore {
 	if logger == nil {
 		logger = log.New(os.Stderr, "[LaunchDarkly InMemoryFeatureStore]", log.LstdFlags)
 	}
