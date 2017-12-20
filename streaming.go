@@ -2,12 +2,13 @@ package ldclient
 
 import (
 	"encoding/json"
-	es "github.com/launchdarkly/eventsource"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	es "github.com/launchdarkly/eventsource"
 )
 
 const (

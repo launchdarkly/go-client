@@ -3,12 +3,15 @@ package ldclient
 import (
 	"encoding/json"
 	"fmt"
-	r "github.com/garyburd/redigo/redis"
-	"github.com/patrickmn/go-cache"
 	"log"
 	"os"
-	"time"
 	"reflect"
+	"time"
+
+	r "github.com/garyburd/redigo/redis"
+	"github.com/patrickmn/go-cache"
+
+	es "github.com/launchdarkly/eventsource"
 )
 
 // A Redis-backed feature store.
@@ -17,7 +20,7 @@ type RedisFeatureStore struct {
 	pool    *r.Pool
 	cache   *cache.Cache
 	timeout time.Duration
-	logger  *log.Logger
+	logger  es.Logger
 }
 
 const (
@@ -56,7 +59,7 @@ func (store *RedisFeatureStore) getConn() r.Conn {
 // connection pool configuration (16 concurrent connections, connection requests block).
 // Attaches a prefix string to all keys to namespace LaunchDarkly-specific keys. If the
 // specified prefix is the empty string, it defaults to "launchdarkly".
-func NewRedisFeatureStoreFromUrl(url, prefix string, timeout time.Duration, logger *log.Logger) *RedisFeatureStore {
+func NewRedisFeatureStoreFromUrl(url, prefix string, timeout time.Duration, logger es.Logger) *RedisFeatureStore {
 	if logger == nil {
 		logger = defaultLogger()
 	}
@@ -68,7 +71,7 @@ func NewRedisFeatureStoreFromUrl(url, prefix string, timeout time.Duration, logg
 // Constructs a new Redis-backed feature store with the specified redigo pool configuration.
 // Attaches a prefix string to all keys to namespace LaunchDarkly-specific keys. If the
 // specified prefix is the empty string, it defaults to "launchdarkly".
-func NewRedisFeatureStoreWithPool(pool *r.Pool, prefix string, timeout time.Duration, logger *log.Logger) *RedisFeatureStore {
+func NewRedisFeatureStoreWithPool(pool *r.Pool, prefix string, timeout time.Duration, logger es.Logger) *RedisFeatureStore {
 	var c *cache.Cache
 
 	if logger == nil {
@@ -99,7 +102,7 @@ func NewRedisFeatureStoreWithPool(pool *r.Pool, prefix string, timeout time.Dura
 // connection pool configuration (16 concurrent connections, connection requests block).
 // Attaches a prefix string to all keys to namespace LaunchDarkly-specific keys. If the
 // specified prefix is the empty string, it defaults to "launchdarkly"
-func NewRedisFeatureStore(host string, port int, prefix string, timeout time.Duration, logger *log.Logger) *RedisFeatureStore {
+func NewRedisFeatureStore(host string, port int, prefix string, timeout time.Duration, logger es.Logger) *RedisFeatureStore {
 	return NewRedisFeatureStoreFromUrl(fmt.Sprintf("redis://%s:%d", host, port), prefix, timeout, logger)
 }
 
@@ -306,6 +309,6 @@ func (store *RedisFeatureStore) Initialized() bool {
 	return err == nil && init
 }
 
-func defaultLogger() *log.Logger {
+func defaultLogger() Logger {
 	return log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags)
 }
