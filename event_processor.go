@@ -17,13 +17,14 @@ type eventProcessor struct {
 	config     Config
 	client     *http.Client
 	eventsIn   chan eventInput
-	flushIn    chan chan struct{}
 	closer     chan struct{}
 	closeOnce  sync.Once
 	closed     bool
 	summarizer *eventSummarizer
 }
 
+// Payload of the eventsIn channel. If event is nil, this is a flush request. The reply
+// channel is non-nil if the caller has requested a reply.
 type eventInput struct {
 	event Event
 	reply chan error
@@ -92,8 +93,7 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		sdkKey:     sdkKey,
 		config:     config,
 		client:     client,
-		eventsIn:   make(chan eventInput),
-		flushIn:    make(chan chan struct{}),
+		eventsIn:   make(chan eventInput, 100),
 		closer:     make(chan struct{}),
 		summarizer: NewEventSummarizer(config),
 	}
@@ -107,13 +107,15 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		for {
 			select {
 			case eventIn := <-res.eventsIn:
-				err := res.sendEventInternal(eventIn.event)
+				var err error
+				if eventIn.event == nil {
+					err = res.flushInternal()
+				} else {
+					err = res.sendEventInternal(eventIn.event)
+				}
 				if eventIn.reply != nil {
 					eventIn.reply <- err
 				}
-			case flushCh := <-res.flushIn:
-				res.flushInternal()
-				flushCh <- struct{}{}
 			case <-ticker.C:
 				res.flushInternal()
 			case <-res.closer:
@@ -133,18 +135,22 @@ func (ep *eventProcessor) close() {
 	})
 }
 
-func (ep *eventProcessor) flush() {
-	replyCh := make(chan struct{})
-	ep.flushIn <- replyCh
+func (ep *eventProcessor) flush() error {
+	input := eventInput{
+		event: nil,
+		reply: make(chan error),
+	}
+	ep.eventsIn <- input
 	// Wait for response
-	<-replyCh
+	err := <-input.reply
+	return err
 }
 
-func (ep *eventProcessor) flushInternal() {
+func (ep *eventProcessor) flushInternal() error {
 	uri := ep.config.EventsUri + "/bulk"
 
 	if len(ep.queue) == 0 || ep.closed {
-		return
+		return nil
 	}
 
 	events := ep.queue
@@ -164,12 +170,14 @@ func (ep *eventProcessor) flushInternal() {
 
 	if marshalErr != nil {
 		ep.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
+		return marshalErr
 	}
 
 	req, reqErr := http.NewRequest("POST", uri, bytes.NewReader(payload))
 
 	if reqErr != nil {
 		ep.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
+		return reqErr
 	}
 
 	req.Header.Add("Authorization", ep.sdkKey)
@@ -187,7 +195,7 @@ func (ep *eventProcessor) flushInternal() {
 
 	if respErr != nil {
 		ep.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
-		return
+		return respErr
 	}
 	err := checkStatusCode(resp.StatusCode, uri)
 	if err != nil {
@@ -195,11 +203,13 @@ func (ep *eventProcessor) flushInternal() {
 		if err != nil && err.Code == 401 {
 			ep.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
 			ep.closed = true
+			return err
 		}
 	} else {
 		t, _ := http.ParseTime(resp.Header.Get("Date"))
 		ep.summarizer.setLastKnownPastTime(toUnixMillis(t))
 	}
+	return nil
 }
 
 // Posts an event asynchronously.
@@ -212,6 +222,9 @@ func (ep *eventProcessor) sendEvent(evt Event) {
 
 // Posts an event and waits until it has been processed, returning the error result if any.
 func (ep *eventProcessor) sendEventSync(evt Event) error {
+	if evt == nil {
+		return nil
+	}
 	input := eventInput{
 		event: evt,
 		reply: make(chan error),
