@@ -59,8 +59,6 @@ func NewEventSummarizer(config Config) *eventSummarizer {
 
 // Add to the set of users we've noticed, and return true if the user is new to us.
 func (s *eventSummarizer) noticeUser(user *User) bool {
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
 	return s.userFilter.AlreadySeen(user)
 }
 
