@@ -1,7 +1,6 @@
 package ldclient
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -95,36 +94,57 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 	es := NewEventSummarizer(esDefaultConfig)
 	flag1 := FeatureFlag{
 		Key:     "key1",
-		Version: 1,
+		Version: 11,
 	}
 	flag2 := FeatureFlag{
 		Key:     "key2",
-		Version: 2,
+		Version: 22,
 	}
+	unknownFlagKey := "badkey"
 	variation1 := 1
 	variation2 := 2
 	event1 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation1, "value1", nil, nil)
 	event2 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation2, "value2", nil, nil)
 	event3 := NewFeatureRequestEvent(flag2.Key, &flag2, user, &variation1, "value99", nil, nil)
 	event4 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation1, "value1", nil, nil)
+	event5 := NewFeatureRequestEvent(unknownFlagKey, nil, user, nil, nil, nil, nil)
 	es.summarizeEvent(event1)
 	es.summarizeEvent(event2)
 	es.summarizeEvent(event3)
 	es.summarizeEvent(event4)
+	es.summarizeEvent(event5)
 	data := es.flush()
 
-	assert.Equal(t, 3, len(data.Counters))
-	dataMap := make(map[interface{}]counterData)
-	for _, c := range data.Counters {
-		dataMap[fmt.Sprintf("%s-%s", c.Key, c.Value)] = c
+	assert.Equal(t, 4, len(data.Counters))
+	result1 := findCounter(data.Counters, flag1.Key, "value1")
+	assert.NotNil(t, result1)
+	assert.Equal(t, flag1.Key, result1.Key)
+	assert.Equal(t, flag1.Version, *result1.Version)
+	assert.Equal(t, 2, result1.Count)
+	assert.Nil(t, result1.Unknown)
+	result2 := findCounter(data.Counters, flag1.Key, "value2")
+	assert.NotNil(t, result2)
+	assert.Equal(t, flag1.Key, result2.Key)
+	assert.Equal(t, flag1.Version, *result2.Version)
+	assert.Equal(t, 1, result2.Count)
+	assert.Nil(t, result2.Unknown)
+	result3 := findCounter(data.Counters, flag2.Key, "value99")
+	assert.Equal(t, flag2.Key, result3.Key)
+	assert.Equal(t, flag2.Version, *result3.Version)
+	assert.Equal(t, 1, result3.Count)
+	assert.Nil(t, result3.Unknown)
+	result4 := findCounter(data.Counters, unknownFlagKey, nil)
+	assert.Equal(t, unknownFlagKey, result4.Key)
+	assert.Nil(t, result4.Version)
+	assert.Equal(t, 1, result4.Count)
+	assert.True(t, *result4.Unknown)
+}
+
+func findCounter(counters []counterData, key string, value interface{}) *counterData {
+	for _, c := range counters {
+		if c.Key == key && c.Value == value {
+			return &c
+		}
 	}
-	assert.Equal(t, flag1.Key, dataMap["key1-value1"].Key)
-	assert.Equal(t, flag1.Version, *dataMap["key1-value1"].Version)
-	assert.Equal(t, 2, dataMap["key1-value1"].Count)
-	assert.Equal(t, flag1.Key, dataMap["key1-value2"].Key)
-	assert.Equal(t, flag1.Version, *dataMap["key1-value2"].Version)
-	assert.Equal(t, 1, dataMap["key1-value2"].Count)
-	assert.Equal(t, flag2.Key, dataMap["key2-value99"].Key)
-	assert.Equal(t, flag2.Version, *dataMap["key2-value99"].Version)
-	assert.Equal(t, 1, dataMap["key2-value99"].Count)
+	return nil
 }

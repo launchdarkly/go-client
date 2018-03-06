@@ -18,8 +18,8 @@ type eventSummarizer struct {
 
 type counterKey struct {
 	key       string
-	variation *int
-	version   *int
+	variation int
+	version   int
 }
 
 type counterValue struct {
@@ -30,8 +30,9 @@ type counterValue struct {
 type counterData struct {
 	Key     string      `json:"key"`
 	Value   interface{} `json:"value"`
-	Version *int        `json:"version"`
+	Version *int        `json:"version,omitempty"`
 	Count   int         `json:"count"`
+	Unknown *bool       `json:"unknown,omitempty"`
 }
 
 type summaryOutput struct {
@@ -90,10 +91,12 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 		}
 	}
 
-	key := counterKey{
-		key:       fe.Key,
-		variation: fe.Variation,
-		version:   fe.Version,
+	key := counterKey{key: fe.Key}
+	if fe.Variation != nil {
+		key.variation = *fe.Variation
+	}
+	if fe.Version != nil {
+		key.version = *fe.Version
 	}
 
 	if value, ok := s.currentFlags[key]; ok {
@@ -137,12 +140,19 @@ func (s *eventSummarizer) flush() summaryOutput {
 	counters := make([]counterData, len(s.currentFlags))
 	i := 0
 	for key, value := range s.currentFlags {
-		counters[i] = counterData{
-			Key:     key.key,
-			Value:   value.flagValue,
-			Version: key.version,
-			Count:   value.count,
+		data := counterData{
+			Key:   key.key,
+			Value: value.flagValue,
+			Count: value.count,
 		}
+		if key.version == 0 {
+			unknown := true
+			data.Unknown = &unknown
+		} else {
+			version := key.version
+			data.Version = &version
+		}
+		counters[i] = data
 		i++
 	}
 	s.currentFlags = make(map[counterKey]*counterValue)
