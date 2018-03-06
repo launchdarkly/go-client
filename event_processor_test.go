@@ -2,6 +2,7 @@ package ldclient
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -39,6 +40,7 @@ const (
 type stubTransport struct {
 	messageSent *http.Request
 	statusCode  int
+	error       error
 }
 
 func init() {
@@ -236,7 +238,23 @@ func TestSdkKeyIsSent(t *testing.T) {
 	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
 }
 
-func TestFlushReturnsHttpError(t *testing.T) {
+func TestFlushReturnsHttpGeneralError(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+
+	expectedErr := fmt.Errorf("problems")
+	st.error = expectedErr
+
+	user := NewUser("userkey")
+	user.Name = strPtr("Red")
+	ie := NewIdentifyEvent(user)
+	ep.sendEvent(ie)
+
+	err := ep.flush()
+	assert.Equal(t, "Post /bulk: "+expectedErr.Error(), err.Error())
+}
+
+func TestFlushReturnsHttpResponseError(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
@@ -386,6 +404,9 @@ func flushAndGetEvents(ep *eventProcessor, st *stubTransport) (output []map[stri
 
 func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.messageSent = request
+	if t.error != nil {
+		return nil, t.error
+	}
 	resp := http.Response{
 		StatusCode: t.statusCode,
 	}
