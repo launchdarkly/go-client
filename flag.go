@@ -14,18 +14,20 @@ const (
 )
 
 type FeatureFlag struct {
-	Key           string             `json:"key" bson:"key"`
-	Version       int                `json:"version" bson:"version"`
-	On            bool               `json:"on" bson:"on"`
-	Prerequisites []Prerequisite     `json:"prerequisites" bson:"prerequisites"`
-	Salt          string             `json:"salt" bson:"salt"`
-	Sel           string             `json:"sel" bson:"sel"`
-	Targets       []Target           `json:"targets" bson:"targets"`
-	Rules         []Rule             `json:"rules" bson:"rules"`
-	Fallthrough   VariationOrRollout `json:"fallthrough" bson:"fallthrough"`
-	OffVariation  *int               `json:"offVariation" bson:"offVariation"`
-	Variations    []interface{}      `json:"variations" bson:"variations"`
-	Deleted       bool               `json:"deleted" bson:"deleted"`
+	Key                       string             `json:"key" bson:"key"`
+	Version                   int                `json:"version" bson:"version"`
+	On                        bool               `json:"on" bson:"on"`
+	Prerequisites             []Prerequisite     `json:"prerequisites" bson:"prerequisites"`
+	Salt                      string             `json:"salt" bson:"salt"`
+	Sel                       string             `json:"sel" bson:"sel"`
+	Targets                   []Target           `json:"targets" bson:"targets"`
+	Rules                     []Rule             `json:"rules" bson:"rules"`
+	Fallthrough               VariationOrRollout `json:"fallthrough" bson:"fallthrough"`
+	OffVariation              *int               `json:"offVariation" bson:"offVariation"`
+	Variations                []interface{}      `json:"variations" bson:"variations"`
+	TrackEvents               bool               `json:"trackEvents" bson:"trackEvents"`
+	TrackEventsExpirationDate *uint64            `json:"trackEventsExpirationDate" bson:"trackEventsExpirationDate"`
+	Deleted                   bool               `json:"deleted" bson:"deleted"`
 }
 
 func (f *FeatureFlag) GetKey() string {
