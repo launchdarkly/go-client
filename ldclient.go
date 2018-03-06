@@ -165,7 +165,8 @@ func (client *LDClient) Identify(user User) error {
 		client.config.Logger.Printf("WARN: Identify called with empty/nil user key!")
 	}
 	evt := NewIdentifyEvent(user)
-	return client.eventProcessor.sendEvent(evt)
+	client.eventProcessor.sendEvent(evt)
+	return nil
 }
 
 // Tracks that a user has performed an event. Custom data can be attached to the
@@ -178,7 +179,8 @@ func (client *LDClient) Track(key string, user User, data interface{}) error {
 		client.config.Logger.Printf("WARN: Track called with empty/nil user key!")
 	}
 	evt := NewCustomEvent(key, user, data)
-	return client.eventProcessor.sendEvent(evt)
+	client.eventProcessor.sendEvent(evt)
+	return nil
 }
 
 // Returns whether the LaunchDarkly client is in offline mode.
@@ -368,12 +370,12 @@ func (client *LDClient) variation(key string, user User, defaultVal interface{},
 	return value, nil
 }
 
-func (client *LDClient) sendFlagRequestEvent(key string, flag *FeatureFlag, user User, variation *int, value, defaultVal interface{}) error {
+func (client *LDClient) sendFlagRequestEvent(key string, flag *FeatureFlag, user User, variation *int, value, defaultVal interface{}) {
 	if client.IsOffline() {
-		return nil
+		return
 	}
 	evt := NewFeatureRequestEvent(key, flag, user, variation, value, defaultVal, nil)
-	return client.eventProcessor.sendEvent(evt)
+	client.eventProcessor.sendEvent(evt)
 }
 
 func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) (interface{}, *int, *FeatureFlag, error) {
@@ -415,10 +417,7 @@ func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) 
 	result, index, prereqEvents := client.evalFlag(*feature, user)
 	if !client.IsOffline() {
 		for _, event := range prereqEvents {
-			err := client.eventProcessor.sendEvent(event)
-			if err != nil {
-				client.config.Logger.Printf("WARN: Error sending feature request event to LaunchDarkly: %+v", err)
-			}
+			client.eventProcessor.sendEvent(event)
 		}
 	}
 	if result != nil {

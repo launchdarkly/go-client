@@ -2,21 +2,21 @@ package ldclient
 
 import (
 	"bytes"
-	"sync"
 
 	"github.com/launchdarkly/foundation/wiltfilter"
 	"github.com/launchdarkly/go-metrics"
 )
 
 // Manages the state of summarizable information for the EventProcessor, including the
-// event counters and user deduplication.
+// event counters and user deduplication. Note that the methods for this type are
+// deliberately not thread-safe, because they should always be called from EventProcessor's
+// single event-processing goroutine.
 type eventSummarizer struct {
 	currentFlags      map[counterKey]*counterValue
 	startDate         uint64
 	endDate           uint64
 	lastKnownPastTime uint64
 	userFilter        wiltfilter.RefreshingWiltFilter
-	flagsLock         *sync.Mutex
 }
 
 type counterKey struct {
@@ -53,7 +53,6 @@ func NewEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
 		currentFlags: make(map[counterKey]*counterValue),
 		userFilter:   userFilter,
-		flagsLock:    &sync.Mutex{},
 	}
 }
 
@@ -73,9 +72,6 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 	if fe.TrackEvents {
 		return false
 	}
-
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
 
 	if fe.TrackEventsExpirationDate != nil {
 		// The "last known past time" comes from the last HTTP response we got from the server.
@@ -116,8 +112,6 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 // Marks the given timestamp (received from the server) as being in the past, in case the
 // client-side time is unreliable.
 func (s *eventSummarizer) setLastKnownPastTime(t uint64) {
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
 	if s.lastKnownPastTime == 0 || s.lastKnownPastTime < t {
 		s.lastKnownPastTime = t
 	}
@@ -125,9 +119,6 @@ func (s *eventSummarizer) setLastKnownPastTime(t uint64) {
 
 // Transforms all current counters into the format used for event sending, then clears them.
 func (s *eventSummarizer) flush() summaryOutput {
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
-
 	// Reset the set of users we've seen (TODO: need to add a manual refresh method to wiltfilter)
 	s.userFilter.Refresh()
 

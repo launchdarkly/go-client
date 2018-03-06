@@ -171,7 +171,7 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 	assert.Equal(t, "summary", seo["kind"])
 	assert.Equal(t, float64(fe1.CreationDate), seo["startDate"])
 	assert.Equal(t, float64(fe2.CreationDate), seo["endDate"])
-	counters := seo["counters"].([]map[string]interface{})
+	counters := seo["counters"].([]interface{})
 	assert.Equal(t, 2, len(counters))
 }
 

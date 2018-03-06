@@ -15,10 +15,13 @@ type eventProcessor struct {
 	queue      []interface{}
 	sdkKey     string
 	config     Config
-	closed     bool
-	mu         *sync.Mutex
 	client     *http.Client
+	eventsIn   chan Event
+	flushIn    chan struct{}
+	flushDone  chan struct{}
 	closer     chan struct{}
+	closeOnce  sync.Once
+	closed     bool
 	summarizer *eventSummarizer
 }
 
@@ -85,8 +88,10 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		sdkKey:     sdkKey,
 		config:     config,
 		client:     client,
+		eventsIn:   make(chan Event),
+		flushIn:    make(chan struct{}),
+		flushDone:  make(chan struct{}),
 		closer:     make(chan struct{}),
-		mu:         &sync.Mutex{},
 		summarizer: NewEventSummarizer(config),
 	}
 
@@ -98,10 +103,16 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		ticker := time.NewTicker(config.FlushInterval)
 		for {
 			select {
+			case event := <-res.eventsIn:
+				res.sendEventInternal(event)
+			case <-res.flushIn:
+				res.flushInternal()
+				res.flushDone <- struct{}{}
 			case <-ticker.C:
-				res.flush()
+				res.flushInternal()
 			case <-res.closer:
 				ticker.Stop()
+				res.flushInternal()
 				return
 			}
 		}
@@ -111,29 +122,26 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 }
 
 func (ep *eventProcessor) close() {
-	ep.mu.Lock()
-	closed := ep.closed
-	ep.closed = true
-	ep.mu.Unlock()
-
-	if !closed {
+	ep.closeOnce.Do(func() {
 		close(ep.closer)
-		ep.flush()
-	}
+	})
 }
 
 func (ep *eventProcessor) flush() {
+	ep.flushIn <- struct{}{}
+	// Wait for response
+	<-ep.flushDone
+}
+
+func (ep *eventProcessor) flushInternal() {
 	uri := ep.config.EventsUri + "/bulk"
-	ep.mu.Lock()
 
 	if len(ep.queue) == 0 || ep.closed {
-		ep.mu.Unlock()
 		return
 	}
 
 	events := ep.queue
 	ep.queue = make([]interface{}, 0)
-	ep.mu.Unlock()
 
 	summaryData := ep.summarizer.flush()
 	if len(summaryData.Counters) > 0 {
@@ -179,9 +187,7 @@ func (ep *eventProcessor) flush() {
 		ep.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
 		if err != nil && err.Code == 401 {
 			ep.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
-			ep.mu.Lock()
 			ep.closed = true
-			ep.mu.Unlock()
 		}
 	} else {
 		t, _ := http.ParseTime(resp.Header.Get("Date"))
@@ -189,7 +195,11 @@ func (ep *eventProcessor) flush() {
 	}
 }
 
-func (ep *eventProcessor) sendEvent(evt Event) error {
+func (ep *eventProcessor) sendEvent(evt Event) {
+	ep.eventsIn <- evt
+}
+
+func (ep *eventProcessor) sendEventInternal(evt Event) error {
 	if !ep.config.SendEvents {
 		return nil
 	}
@@ -256,9 +266,6 @@ func (ep *eventProcessor) sendEvent(evt Event) error {
 }
 
 func (ep *eventProcessor) queueEventOutput(eventOutput interface{}) error {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
-
 	if ep.closed {
 		return nil
 	}
