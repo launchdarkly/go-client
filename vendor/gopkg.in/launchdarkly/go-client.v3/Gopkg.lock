@@ -21,10 +21,7 @@
 
 [[projects]]
   name = "github.com/garyburd/redigo"
-  packages = [
-    "internal",
-    "redis"
-  ]
+  packages = ["internal","redis"]
   revision = "d1ed5c67e5794de818ea85e6b522fda02623a484"
   version = "v1.4.0"
 
@@ -36,39 +33,9 @@
 
 [[projects]]
   branch = "master"
-  name = "github.com/jasonlvhit/gocron"
-  packages = ["."]
-  revision = "3c914c8681c3998f1dd463d84a4d8c29345e47a4"
-
-[[projects]]
-  branch = "master"
-  name = "github.com/jmhodges/opposite_of_a_bloom_filter"
-  packages = ["go/oppobloom"]
-  revision = "7cb6ac161fd71ac93b02b95e6a60495b40612195"
-
-[[projects]]
-  branch = "master"
   name = "github.com/launchdarkly/eventsource"
   packages = ["."]
   revision = "a45c212c667804d2687d2780839b04e288e2160d"
-
-[[projects]]
-  branch = "master"
-  name = "github.com/launchdarkly/foundation"
-  packages = [
-    "core",
-    "logger",
-    "redis_config",
-    "statuschecks",
-    "wiltfilter"
-  ]
-  revision = "98392db1dc775ce2566054341f83998a4743694f"
-
-[[projects]]
-  branch = "master"
-  name = "github.com/launchdarkly/go-metrics"
-  packages = ["."]
-  revision = "eaf6f21d2060d08672d5a81689ac78134c871cdf"
 
 [[projects]]
   name = "github.com/patrickmn/go-cache"
@@ -88,18 +55,9 @@
   revision = "12b6f73e6084dad08a7c6e575284b177ecafbc71"
   version = "v1.2.1"
 
-[[projects]]
-  name = "gopkg.in/launchdarkly/go-client.v3"
-  packages = [
-    ".",
-    "shared_test"
-  ]
-  revision = "2ce862aa96e76834e1566c487d774aa96dc06664"
-  version = "3.0.0"
-
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "ce5d30c963c8ecc8abe3c800388b0ea81da182a4b0a2759a0424a07ac7e9ca6d"
+  inputs-digest = "d520e641e6ac99c03a70297eeb94624520c24eaf91fe52cfa264300187f8a511"
   solver-name = "gps-cdcl"
   solver-version = 1

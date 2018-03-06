@@ -1,0 +1,13 @@
+{
+	"Enable": [
+		"gas",
+		"gofmt",
+		"goimports",
+		"vet"
+	],
+	"Linters": {
+		"gas": {
+			"Command":           "gas -fmt=csv -exclude=G101,G104"
+		}
+	}
+}

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Skip this if no go files have changed
+git diff --cached --name-only --diff-filter=ACM | grep -q "\.go" || exit 0
+
+echo -n "Running go vet... "
+
+govendor tool vet -composites=false +local 2>&1
+status=$?
+
+if [[ $status != 0 ]]; then
+    echo "FAIL"
+    exit 1
+fi
+
+echo "PASS"
+

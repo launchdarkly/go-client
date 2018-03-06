@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/launchdarkly/foundation/wiltfilter"
+	"github.com/launchdarkly/go-metrics"
 )
 
 // Manages the state of summarizable information for the EventProcessor, including the
@@ -46,7 +47,8 @@ func NewEventSummarizer(config Config) *eventSummarizer {
 	// TODO: currently NewWiltFilter returns a filter with a daily auto-refresh, which isn't
 	// what we want (our refresh should be tied to the flushing of summary events). There isn't
 	// yet a method for a filter that does manual refreshing only; we should add one.
-	userFilter := wiltfilter.NewWiltFilter("userFilter")
+	var registry metrics.Registry
+	userFilter := wiltfilter.NewWiltFilter("userFilter", registry)
 
 	return &eventSummarizer{
 		currentFlags: make(map[counterKey]*counterValue),
@@ -129,7 +131,8 @@ func (s *eventSummarizer) flush() summaryOutput {
 	defer s.flagsLock.Unlock()
 
 	// Reset the set of users we've seen (TODO: need to add a manual refresh method to wiltfilter)
-	s.userFilter = wiltfilter.NewWiltFilter("userFilter")
+	var registry metrics.Registry
+	s.userFilter = wiltfilter.NewWiltFilter("userFilter", registry)
 
 	counters := make([]counterData, len(s.currentFlags))
 	i := 0

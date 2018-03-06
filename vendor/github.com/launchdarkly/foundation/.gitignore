@@ -1,0 +1,5 @@
+.idea
+
+# Workaround until https://github.com/go-mgo/mgo/pull/450 is merged
+# We don't use this package, so it's safe to delete it.
+/vendor/gopkg.in/mgo.v2/internal/sasl/
