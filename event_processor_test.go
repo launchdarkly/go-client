@@ -3,7 +3,9 @@ package ldclient
 import (
 	"encoding/json"
 	"io/ioutil"
+	"log"
 	"net/http"
+	"os"
 	"sort"
 	"testing"
 	"time"
@@ -26,6 +28,7 @@ var epDefaultConfig = Config{
 	SendEvents:       true,
 	Capacity:         1000,
 	FlushInterval:    1 * time.Hour,
+	Logger:           log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
 	UserKeysCapacity: 1000,
 }
 
@@ -35,6 +38,7 @@ const (
 
 type stubTransport struct {
 	messageSent *http.Request
+	statusCode  int
 }
 
 func init() {
@@ -232,6 +236,21 @@ func TestSdkKeyIsSent(t *testing.T) {
 	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
 }
 
+func TestFlushReturnsHttpError(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+
+	st.statusCode = 400
+
+	user := NewUser("userkey")
+	user.Name = strPtr("Red")
+	ie := NewIdentifyEvent(user)
+	ep.sendEvent(ie)
+
+	err := ep.flush()
+	assert.NoError(t, err)
+}
+
 func TestScrubUser(t *testing.T) {
 	t.Run("private built-in attributes per user", func(t *testing.T) {
 		user := User{
@@ -343,7 +362,9 @@ func jsonMap(o interface{}) map[string]interface{} {
 }
 
 func createEventProcessor(config Config) (*eventProcessor, *stubTransport) {
-	transport := &stubTransport{}
+	transport := &stubTransport{
+		statusCode: 200,
+	}
 	client := &http.Client{
 		Transport: transport,
 	}
@@ -366,7 +387,7 @@ func flushAndGetEvents(ep *eventProcessor, st *stubTransport) (output []map[stri
 func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.messageSent = request
 	resp := http.Response{
-		StatusCode: 200,
+		StatusCode: t.statusCode,
 	}
 	return &resp, nil
 }
