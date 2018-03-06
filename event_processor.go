@@ -17,8 +17,7 @@ type eventProcessor struct {
 	config     Config
 	client     *http.Client
 	eventsIn   chan eventInput
-	flushIn    chan struct{}
-	flushDone  chan struct{}
+	flushIn    chan chan struct{}
 	closer     chan struct{}
 	closeOnce  sync.Once
 	closed     bool
@@ -94,8 +93,7 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		config:     config,
 		client:     client,
 		eventsIn:   make(chan eventInput),
-		flushIn:    make(chan struct{}),
-		flushDone:  make(chan struct{}),
+		flushIn:    make(chan chan struct{}),
 		closer:     make(chan struct{}),
 		summarizer: NewEventSummarizer(config),
 	}
@@ -113,9 +111,9 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 				if eventInput.reply != nil {
 					eventInput.reply <- err
 				}
-			case <-res.flushIn:
+			case flushCh := <-res.flushIn:
 				res.flushInternal()
-				res.flushDone <- struct{}{}
+				flushCh <- struct{}{}
 			case <-ticker.C:
 				res.flushInternal()
 			case <-res.closer:
@@ -136,9 +134,10 @@ func (ep *eventProcessor) close() {
 }
 
 func (ep *eventProcessor) flush() {
-	ep.flushIn <- struct{}{}
+	replyCh := make(chan struct{})
+	ep.flushIn <- replyCh
 	// Wait for response
-	<-ep.flushDone
+	<-replyCh
 }
 
 func (ep *eventProcessor) flushInternal() {
