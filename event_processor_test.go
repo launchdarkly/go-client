@@ -137,7 +137,7 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 	assert.Equal(t, *user.Key, feo2["userKey"])
 }
 
-func NonTrackedEventsAreSummarized(t *testing.T) {
+func TestNonTrackedEventsAreSummarized(t *testing.T) {
 	ep, st := createEventProcessor(defaultConfig)
 	defer ep.close()
 
