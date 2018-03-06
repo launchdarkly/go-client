@@ -12,13 +12,13 @@ var esDefaultConfig = Config{
 	UserKeysCapacity: 100,
 }
 
-func NoticeUserReturnsFalseForNeverSeenUser(t *testing.T) {
+func TestNoticeUserReturnsFalseForNeverSeenUser(t *testing.T) {
 	es := NewEventSummarizer(esDefaultConfig)
 	result := es.noticeUser(&user)
 	assert.False(t, result)
 }
 
-func NoticeUserReturnsTrueForPreviouslySeenUser(t *testing.T) {
+func TestNoticeUserReturnsTrueForPreviouslySeenUser(t *testing.T) {
 	es := NewEventSummarizer(esDefaultConfig)
 	es.noticeUser(&user)
 	user2 := user
