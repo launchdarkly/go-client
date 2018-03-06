@@ -17,6 +17,7 @@ const (
 	Hourly   RefreshInterval = "hour"
 	Minutely RefreshInterval = "min"
 	Secondly RefreshInterval = "sec"
+	Manually RefreshInterval = "manual"
 )
 
 type RefreshConfig struct {
@@ -31,7 +32,13 @@ var DefaultDailyRefreshConfig = RefreshConfig{
 	RandomizeDailyTime: true,
 }
 
-// This wrapper will recreate the WiltFilter state from a clean slate daily.  The time of the refresh is randomized when the
+type RefreshingWiltFilter interface {
+	WiltFilter
+	Refresh()
+}
+
+// This wrapper will recreate the WiltFilter state from a clean slate either at the specified
+// interval, or when Refresh() is called.  The time of the refresh is randomized when the
 // WiltFilter is created, to avoid all nodes starting with a cold cache at the same time.
 type refreshingWiltFilter struct {
 	genWiltFilter func() WiltFilter
@@ -40,7 +47,7 @@ type refreshingWiltFilter struct {
 	name          string
 }
 
-func (d *refreshingWiltFilter) refresh() {
+func (d *refreshingWiltFilter) Refresh() {
 	d.m.Lock()
 	defer d.m.Unlock()
 	logger.Debug.Printf("[%s] Refreshing WiltFilter state", d.name)
@@ -55,6 +62,9 @@ func (d *refreshingWiltFilter) AlreadySeen(o Dedupable) bool {
 }
 
 func makeJobFromConfig(conf RefreshConfig) (job *gocron.Job, logMessage string) {
+	if conf.Interval == Manually {
+		return nil, ""
+	}
 	if conf.Frequency < 1 {
 		logger.Warn.Println("Found an invalid value for RefreshConfig Frequency, setting it to 1")
 		conf.Frequency = 1
@@ -87,10 +97,12 @@ func makeJobFromConfig(conf RefreshConfig) (job *gocron.Job, logMessage string) 
 
 func makeRefreshingWiltFilter(gen func() WiltFilter, conf RefreshConfig, name string) *refreshingWiltFilter {
 	ret := refreshingWiltFilter{genWiltFilter: gen, name: name}
-	ret.refresh()
+	ret.Refresh()
 	job, logMessage := makeJobFromConfig(conf)
-	job.Do(ret.refresh)
-	gocron.Start()
+	if job != nil {
+		job.Do(ret.Refresh)
+		gocron.Start()
+	}
 	logger.Info.Printf("[%s] %s", name, logMessage)
 	return &ret
 }

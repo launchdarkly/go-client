@@ -55,7 +55,7 @@ func TestRepeatUserIsNotSeenAfterRefresh(t *testing.T) {
 	}, DefaultDailyRefreshConfig,
 		"TestRepeatUserIsNotSeenAfterRefresh")
 	d.AlreadySeen(&userEnvDedupable{envId, u})
-	d.refresh()
+	d.Refresh()
 	seen := d.AlreadySeen(&userEnvDedupable{envId, u})
 	if seen {
 		t.Error("WiltFilter said the user was seen, but it should not have")

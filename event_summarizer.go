@@ -15,7 +15,7 @@ type eventSummarizer struct {
 	startDate         uint64
 	endDate           uint64
 	lastKnownPastTime uint64
-	userFilter        wiltfilter.WiltFilter
+	userFilter        wiltfilter.RefreshingWiltFilter
 	flagsLock         *sync.Mutex
 }
 
@@ -44,11 +44,11 @@ type summaryOutput struct {
 }
 
 func NewEventSummarizer(config Config) *eventSummarizer {
-	// TODO: currently NewWiltFilter returns a filter with a daily auto-refresh, which isn't
-	// what we want (our refresh should be tied to the flushing of summary events). There isn't
-	// yet a method for a filter that does manual refreshing only; we should add one.
+	filterConfig := wiltfilter.RefreshConfig{
+		Interval: wiltfilter.Manually,
+	}
 	var registry metrics.Registry
-	userFilter := wiltfilter.NewWiltFilter("userFilter", registry)
+	userFilter := wiltfilter.NewWiltFilterWithRefreshConfig(filterConfig, "userFilter", registry)
 
 	return &eventSummarizer{
 		currentFlags: make(map[counterKey]*counterValue),
@@ -131,8 +131,7 @@ func (s *eventSummarizer) flush() summaryOutput {
 	defer s.flagsLock.Unlock()
 
 	// Reset the set of users we've seen (TODO: need to add a manual refresh method to wiltfilter)
-	var registry metrics.Registry
-	s.userFilter = wiltfilter.NewWiltFilter("userFilter", registry)
+	s.userFilter.Refresh()
 
 	counters := make([]counterData, len(s.currentFlags))
 	i := 0

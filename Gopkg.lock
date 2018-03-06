@@ -62,7 +62,7 @@
     "statuschecks",
     "wiltfilter"
   ]
-  revision = "98392db1dc775ce2566054341f83998a4743694f"
+  revision = "786fd35ece1d71b08800978751e33e57b552b190"
 
 [[projects]]
   branch = "master"
@@ -100,6 +100,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "ce5d30c963c8ecc8abe3c800388b0ea81da182a4b0a2759a0424a07ac7e9ca6d"
+  inputs-digest = "bf3c5b6727685e8d176d3b2ce2e9db6200ce6d52bdb3a9feed4db15c3e326922"
   solver-name = "gps-cdcl"
   solver-version = 1

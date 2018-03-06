@@ -23,7 +23,7 @@ func NewWiltFilter(name string, registry metrics.Registry) WiltFilter {
 	return NewWiltFilterWithRefreshConfig(DefaultDailyRefreshConfig, name, registry)
 }
 
-func NewWiltFilterWithRefreshConfig(conf RefreshConfig, name string, registry metrics.Registry) WiltFilter {
+func NewWiltFilterWithRefreshConfig(conf RefreshConfig, name string, registry metrics.Registry) RefreshingWiltFilter {
 	return makeRefreshingWiltFilter(func() WiltFilter {
 		return makeThreadsafeWiltFilter(makeWiltFilter(filterSize, wiltFilterCounter(name, registry)))
 	}, conf, name)
