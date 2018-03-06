@@ -167,8 +167,7 @@ func (client *LDClient) Identify(user User) error {
 		client.config.Logger.Printf("WARN: Identify called with empty/nil user key!")
 	}
 	evt := NewIdentifyEvent(user)
-	client.eventProcessor.sendEvent(evt)
-	return nil
+	return client.eventProcessor.sendEventSync(evt)
 }
 
 // Tracks that a user has performed an event. Custom data can be attached to the
@@ -181,8 +180,7 @@ func (client *LDClient) Track(key string, user User, data interface{}) error {
 		client.config.Logger.Printf("WARN: Track called with empty/nil user key!")
 	}
 	evt := NewCustomEvent(key, user, data)
-	client.eventProcessor.sendEvent(evt)
-	return nil
+	return client.eventProcessor.sendEventSync(evt)
 }
 
 // Returns whether the LaunchDarkly client is in offline mode.

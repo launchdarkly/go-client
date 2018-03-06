@@ -22,7 +22,7 @@ var BuiltinAttributes = []string{
 	"secondary",
 }
 
-var defaultConfig = Config{
+var epDefaultConfig = Config{
 	SendEvents:       true,
 	Capacity:         1000,
 	FlushInterval:    1 * time.Hour,
@@ -42,7 +42,7 @@ func init() {
 }
 
 func TestIdentifyEventIsQueued(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -60,7 +60,7 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 }
 
 func TestIndividualFeatureEventIsQueuedWithIndexEvent(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -92,7 +92,7 @@ func TestIndividualFeatureEventIsQueuedWithIndexEvent(t *testing.T) {
 }
 
 func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -139,7 +139,7 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 }
 
 func TestNonTrackedEventsAreSummarized(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -177,7 +177,7 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 }
 
 func TestCustomEventIsQueuedWithUser(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -203,8 +203,24 @@ func TestCustomEventIsQueuedWithUser(t *testing.T) {
 	assert.Equal(t, *user.Key, ceo["userKey"])
 }
 
+func TestSendEventSyncReturnsErrorIfQueueFull(t *testing.T) {
+	config := epDefaultConfig
+	config.Capacity = 1
+	ep, _ := createEventProcessor(config)
+	defer ep.close()
+
+	user := NewUser("userkey")
+	user.Name = strPtr("Red")
+	ie := NewIdentifyEvent(user)
+	err := ep.sendEventSync(ie)
+	assert.NoError(t, err)
+
+	err = ep.sendEventSync(ie)
+	assert.Error(t, err)
+}
+
 func TestSdkKeyIsSent(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")

@@ -16,13 +16,18 @@ type eventProcessor struct {
 	sdkKey     string
 	config     Config
 	client     *http.Client
-	eventsIn   chan Event
+	eventsIn   chan eventInput
 	flushIn    chan struct{}
 	flushDone  chan struct{}
 	closer     chan struct{}
 	closeOnce  sync.Once
 	closed     bool
 	summarizer *eventSummarizer
+}
+
+type eventInput struct {
+	event Event
+	reply chan error
 }
 
 // Serializable form of a feature request event. This differs from the event that was
@@ -88,7 +93,7 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		sdkKey:     sdkKey,
 		config:     config,
 		client:     client,
-		eventsIn:   make(chan Event),
+		eventsIn:   make(chan eventInput),
 		flushIn:    make(chan struct{}),
 		flushDone:  make(chan struct{}),
 		closer:     make(chan struct{}),
@@ -103,8 +108,11 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		ticker := time.NewTicker(config.FlushInterval)
 		for {
 			select {
-			case event := <-res.eventsIn:
-				res.sendEventInternal(event)
+			case eventInput := <-res.eventsIn:
+				err := res.sendEventInternal(eventInput.event)
+				if eventInput.reply != nil {
+					eventInput.reply <- err
+				}
 			case <-res.flushIn:
 				res.flushInternal()
 				res.flushDone <- struct{}{}
@@ -195,8 +203,23 @@ func (ep *eventProcessor) flushInternal() {
 	}
 }
 
+// Posts an event asynchronously.
 func (ep *eventProcessor) sendEvent(evt Event) {
-	ep.eventsIn <- evt
+	ep.eventsIn <- eventInput{
+		event: evt,
+		reply: nil,
+	}
+}
+
+// Posts an event and waits until it has been processed, returning the error result if any.
+func (ep *eventProcessor) sendEventSync(evt Event) error {
+	input := eventInput{
+		event: evt,
+		reply: make(chan error),
+	}
+	ep.eventsIn <- input
+	err := <-input.reply
+	return err
 }
 
 func (ep *eventProcessor) sendEventInternal(evt Event) error {
