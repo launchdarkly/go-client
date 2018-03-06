@@ -202,7 +202,7 @@ func makeClientWithFeatureFlag(variations []interface{}) *LDClient {
 	client := LDClient{
 		sdkKey:          "sdkKey",
 		config:          config,
-		eventProcessor:  newEventProcessor("sdkKey", config),
+		eventProcessor:  newEventProcessor("sdkKey", config, nil),
 		updateProcessor: TestUpdateProcessor{},
 		store:           NewInMemoryFeatureStore(nil),
 	}

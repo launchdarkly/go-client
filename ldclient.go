@@ -121,7 +121,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 		return &client, nil
 	}
 
-	client.eventProcessor = newEventProcessor(sdkKey, config)
+	client.eventProcessor = newEventProcessor(sdkKey, config, nil)
 
 	if config.UseLdd {
 		config.Logger.Println("Started Launchdarkly in LDD mode")
@@ -256,7 +256,7 @@ func (client *LDClient) AllFlags(user User) map[string]interface{} {
 	}
 	for _, item := range items {
 		if flag, ok := item.(*FeatureFlag); ok {
-			result, _ := client.evalFlag(*flag, user)
+			result, _, _ := client.evalFlag(*flag, user)
 			results[flag.Key] = result
 		}
 	}
@@ -264,27 +264,27 @@ func (client *LDClient) AllFlags(user User) map[string]interface{} {
 	return results
 }
 
-func (client *LDClient) evalFlag(flag FeatureFlag, user User) (interface{}, []FeatureRequestEvent) {
+func (client *LDClient) evalFlag(flag FeatureFlag, user User) (interface{}, *int, []FeatureRequestEvent) {
 	var prereqEvents []FeatureRequestEvent
 	if flag.On {
 		evalResult, err := flag.EvaluateExplain(user, client.store)
 		prereqEvents = evalResult.PrerequisiteRequestEvents
 
 		if err != nil {
-			return nil, prereqEvents
+			return nil, nil, prereqEvents
 		}
 
 		if evalResult.Value != nil {
-			return evalResult.Value, prereqEvents
+			return evalResult.Value, evalResult.Variation, prereqEvents
 		}
 		// If the value is nil, but the error is not, fall through and use the off variation
 	}
 
 	if flag.OffVariation != nil && *flag.OffVariation < len(flag.Variations) {
 		value := flag.Variations[*flag.OffVariation]
-		return value, prereqEvents
+		return value, flag.OffVariation, prereqEvents
 	}
-	return nil, prereqEvents
+	return nil, nil, prereqEvents
 }
 
 // Returns the value of a boolean feature flag for a given user. Returns defaultVal if
@@ -332,18 +332,18 @@ func (client *LDClient) JsonVariation(key string, user User, defaultVal json.Raw
 	if client.IsOffline() {
 		return defaultVal, nil
 	}
-	value, version, err := client.Evaluate(key, user, defaultVal)
+	value, index, flag, err := client.Evaluate(key, user, defaultVal)
 
 	if err != nil {
-		client.sendFlagRequestEvent(key, user, defaultVal, defaultVal, version)
+		client.sendFlagRequestEvent(key, flag, user, index, defaultVal, defaultVal)
 		return defaultVal, err
 	}
 	valueJsonRawMessage, err := ToJsonRawMessage(value)
 	if err != nil {
-		client.sendFlagRequestEvent(key, user, defaultVal, defaultVal, version)
+		client.sendFlagRequestEvent(key, flag, user, index, defaultVal, defaultVal)
 		return defaultVal, err
 	}
-	client.sendFlagRequestEvent(key, user, valueJsonRawMessage, defaultVal, version)
+	client.sendFlagRequestEvent(key, flag, user, index, valueJsonRawMessage, defaultVal)
 	return valueJsonRawMessage, nil
 }
 
@@ -353,32 +353,32 @@ func (client *LDClient) variation(key string, user User, defaultVal interface{},
 	if client.IsOffline() {
 		return defaultVal, nil
 	}
-	value, version, err := client.Evaluate(key, user, defaultVal)
+	value, index, flag, err := client.Evaluate(key, user, defaultVal)
 	if err != nil {
-		client.sendFlagRequestEvent(key, user, defaultVal, defaultVal, version)
+		client.sendFlagRequestEvent(key, flag, user, index, defaultVal, defaultVal)
 		return defaultVal, err
 	}
 
 	valueType := reflect.TypeOf(value)
 	if expectedType != valueType {
-		client.sendFlagRequestEvent(key, user, defaultVal, defaultVal, version)
+		client.sendFlagRequestEvent(key, flag, user, index, defaultVal, defaultVal)
 		return defaultVal, fmt.Errorf("Feature flag returned value: %+v of incompatible type: %+v; Expected: %+v", value, valueType, expectedType)
 	}
-	client.sendFlagRequestEvent(key, user, value, defaultVal, version)
+	client.sendFlagRequestEvent(key, flag, user, index, value, defaultVal)
 	return value, nil
 }
 
-func (client *LDClient) sendFlagRequestEvent(key string, user User, value, defaultVal interface{}, version *int) error {
+func (client *LDClient) sendFlagRequestEvent(key string, flag *FeatureFlag, user User, variation *int, value, defaultVal interface{}) error {
 	if client.IsOffline() {
 		return nil
 	}
-	evt := NewFeatureRequestEvent(key, user, value, defaultVal, version, nil)
+	evt := NewFeatureRequestEvent(key, flag, user, variation, value, defaultVal, nil)
 	return client.eventProcessor.sendEvent(evt)
 }
 
-func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) (interface{}, *int, error) {
+func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) (interface{}, *int, *FeatureFlag, error) {
 	if user.Key == nil {
-		return defaultVal, nil, fmt.Errorf("User.Key cannot be nil for user: %+v when evaluating flag: %s", user, key)
+		return defaultVal, nil, nil, fmt.Errorf("User.Key cannot be nil for user: %+v when evaluating flag: %s", user, key)
 	}
 	if *user.Key == "" {
 		client.config.Logger.Printf("WARN: User.Key is blank when evaluating flag: %s. Flag evaluation will proceed, but the user will not be stored in LaunchDarkly.", key)
@@ -392,7 +392,7 @@ func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) 
 		if client.store.Initialized() {
 			client.config.Logger.Printf("WARN: Feature flag evaluation called before LaunchDarkly client initialization completed; using last known values from feature store")
 		} else {
-			return defaultVal, nil, ErrClientNotInitialized
+			return defaultVal, nil, nil, ErrClientNotInitialized
 		}
 	}
 
@@ -400,19 +400,19 @@ func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) 
 
 	if storeErr != nil {
 		client.config.Logger.Printf("Encountered error fetching feature from store: %+v", storeErr)
-		return defaultVal, nil, storeErr
+		return defaultVal, nil, nil, storeErr
 	}
 
 	if data != nil {
 		feature, ok = data.(*FeatureFlag)
 		if !ok {
-			return defaultVal, nil, fmt.Errorf("Unexpected data type (%T) found in store for feature key: %s. Returning default value.", data, key)
+			return defaultVal, nil, nil, fmt.Errorf("Unexpected data type (%T) found in store for feature key: %s. Returning default value.", data, key)
 		}
 	} else {
-		return defaultVal, nil, fmt.Errorf("Unknown feature key: %s Verify that this feature key exists. Returning default value.", key)
+		return defaultVal, nil, nil, fmt.Errorf("Unknown feature key: %s Verify that this feature key exists. Returning default value.", key)
 	}
 
-	result, prereqEvents := client.evalFlag(*feature, user)
+	result, index, prereqEvents := client.evalFlag(*feature, user)
 	if !client.IsOffline() {
 		for _, event := range prereqEvents {
 			err := client.eventProcessor.sendEvent(event)
@@ -422,7 +422,7 @@ func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) 
 		}
 	}
 	if result != nil {
-		return result, &feature.Version, nil
+		return result, index, feature, nil
 	}
-	return defaultVal, &feature.Version, nil
+	return defaultVal, index, feature, nil
 }
