@@ -1,11 +1,7 @@
 package ldclient
 
 import (
-	"bytes"
 	"sync"
-
-	"github.com/launchdarkly/foundation/wiltfilter"
-	"github.com/launchdarkly/go-metrics"
 )
 
 // Manages the state of summarizable information for the EventProcessor, including the
@@ -15,7 +11,8 @@ type eventSummarizer struct {
 	startDate         uint64
 	endDate           uint64
 	lastKnownPastTime uint64
-	userFilter        wiltfilter.RefreshingWiltFilter
+	userKeysSeen      map[string]struct{}
+	userCapacity      int
 	flagsLock         *sync.Mutex
 }
 
@@ -44,22 +41,28 @@ type summaryOutput struct {
 }
 
 func NewEventSummarizer(config Config) *eventSummarizer {
-	filterConfig := wiltfilter.RefreshConfig{
-		Interval: wiltfilter.Manually,
-	}
-	var registry metrics.Registry
-	userFilter := wiltfilter.NewWiltFilterWithRefreshConfig(filterConfig, "userFilter", registry)
-
 	return &eventSummarizer{
 		currentFlags: make(map[counterKey]*counterValue),
-		userFilter:   userFilter,
+		userKeysSeen: make(map[string]struct{}),
+		userCapacity: config.UserKeysCapacity,
 		flagsLock:    &sync.Mutex{},
 	}
 }
 
-// Add to the set of users we've noticed, and return true if the user is new to us.
+// Add to the set of users we've noticed, and return true if the user was already known to us.
 func (s *eventSummarizer) noticeUser(user *User) bool {
-	return s.userFilter.AlreadySeen(user)
+	if user == nil || user.Key == nil {
+		return false
+	}
+	s.flagsLock.Lock()
+	defer s.flagsLock.Unlock()
+	if _, ok := s.userKeysSeen[*user.Key]; ok {
+		return true
+	}
+	if len(s.userKeysSeen) < s.userCapacity {
+		s.userKeysSeen[*user.Key] = struct{}{}
+	}
+	return false
 }
 
 // Check whether this is a kind of event that we should summarize; if so, add it to our
@@ -128,8 +131,8 @@ func (s *eventSummarizer) flush() summaryOutput {
 	s.flagsLock.Lock()
 	defer s.flagsLock.Unlock()
 
-	// Reset the set of users we've seen (TODO: need to add a manual refresh method to wiltfilter)
-	s.userFilter.Refresh()
+	// Reset the set of users we've seen
+	s.userKeysSeen = make(map[string]struct{})
 
 	counters := make([]counterData, len(s.currentFlags))
 	i := 0
@@ -153,12 +156,4 @@ func (s *eventSummarizer) flush() summaryOutput {
 	s.endDate = 0
 
 	return ret
-}
-
-// Makes wiltfilter work with Users.
-func (user *User) UniqueBytes() *bytes.Buffer {
-	if user == nil || user.Key == nil {
-		return nil
-	}
-	return bytes.NewBufferString(*user.Key)
 }
