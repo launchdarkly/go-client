@@ -58,18 +58,9 @@
   revision = "12b6f73e6084dad08a7c6e575284b177ecafbc71"
   version = "v1.2.1"
 
-[[projects]]
-  name = "gopkg.in/launchdarkly/go-client.v3"
-  packages = [
-    ".",
-    "shared_test"
-  ]
-  revision = "2ce862aa96e76834e1566c487d774aa96dc06664"
-  version = "3.0.0"
-
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "82ca6b736a8190d96b0e6086ffd7033eeba1625edd1556bd547513f91b497039"
+  inputs-digest = "d520e641e6ac99c03a70297eeb94624520c24eaf91fe52cfa264300187f8a511"
   solver-name = "gps-cdcl"
   solver-version = 1
