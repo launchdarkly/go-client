@@ -106,10 +106,10 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		ticker := time.NewTicker(config.FlushInterval)
 		for {
 			select {
-			case eventInput := <-res.eventsIn:
-				err := res.sendEventInternal(eventInput.event)
-				if eventInput.reply != nil {
-					eventInput.reply <- err
+			case eventIn := <-res.eventsIn:
+				err := res.sendEventInternal(eventIn.event)
+				if eventIn.reply != nil {
+					eventIn.reply <- err
 				}
 			case flushCh := <-res.flushIn:
 				res.flushInternal()
