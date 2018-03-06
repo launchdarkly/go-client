@@ -8,21 +8,52 @@ import (
 )
 
 var user = NewUser("key")
+var esDefaultConfig = Config{
+	UserKeysCapacity: 100,
+}
+
+func NoticeUserReturnsFalseForNeverSeenUser(t *testing.T) {
+	es := NewEventSummarizer(esDefaultConfig)
+	result := es.noticeUser(&user)
+	assert.False(t, result)
+}
+
+func NoticeUserReturnsTrueForPreviouslySeenUser(t *testing.T) {
+	es := NewEventSummarizer(esDefaultConfig)
+	es.noticeUser(&user)
+	user2 := user
+	result := es.noticeUser(&user2)
+	assert.True(t, result)
+}
+
+func TestUsersNotDeduplicatedIfCapacityExceeded(t *testing.T) {
+	config := Config{
+		UserKeysCapacity: 2,
+	}
+	es := NewEventSummarizer(config)
+	user1 := NewUser("key1")
+	user2 := NewUser("key2")
+	user3 := NewUser("key3")
+	es.noticeUser(&user1)
+	es.noticeUser(&user2)
+	result := es.noticeUser(&user3)
+	assert.False(t, result)
+}
 
 func TestSummarizeEventReturnsFalseForIdentifyEvent(t *testing.T) {
-	es := NewEventSummarizer(Config{})
+	es := NewEventSummarizer(esDefaultConfig)
 	event := NewIdentifyEvent(user)
 	assert.False(t, es.summarizeEvent(event))
 }
 
 func TestSummarizeEventReturnsFalseForCustomEvent(t *testing.T) {
-	es := NewEventSummarizer(Config{})
+	es := NewEventSummarizer(esDefaultConfig)
 	event := NewCustomEvent("whatever", user, nil)
 	assert.False(t, es.summarizeEvent(event))
 }
 
 func TestSummarizeEventReturnsTrueForFeatureEventWithTrackEventsFalse(t *testing.T) {
-	es := NewEventSummarizer(Config{})
+	es := NewEventSummarizer(esDefaultConfig)
 	flag := FeatureFlag{
 		Key:         "key",
 		TrackEvents: false,
@@ -32,7 +63,7 @@ func TestSummarizeEventReturnsTrueForFeatureEventWithTrackEventsFalse(t *testing
 }
 
 func TestSummarizeEventReturnsFalseForFeatureEventWithTrackEventsTrue(t *testing.T) {
-	es := NewEventSummarizer(Config{})
+	es := NewEventSummarizer(esDefaultConfig)
 	flag := FeatureFlag{
 		Key:         "key",
 		TrackEvents: true,
@@ -42,7 +73,7 @@ func TestSummarizeEventReturnsFalseForFeatureEventWithTrackEventsTrue(t *testing
 }
 
 func TestSummarizeEventSetsStartAndEndDates(t *testing.T) {
-	es := NewEventSummarizer(Config{})
+	es := NewEventSummarizer(esDefaultConfig)
 	flag := FeatureFlag{
 		Key: "key",
 	}
@@ -61,7 +92,7 @@ func TestSummarizeEventSetsStartAndEndDates(t *testing.T) {
 }
 
 func TestSummarizeEventIncrementsCounters(t *testing.T) {
-	es := NewEventSummarizer(Config{})
+	es := NewEventSummarizer(esDefaultConfig)
 	flag1 := FeatureFlag{
 		Key:     "key1",
 		Version: 1,

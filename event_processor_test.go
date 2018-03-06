@@ -23,9 +23,10 @@ var BuiltinAttributes = []string{
 }
 
 var defaultConfig = Config{
-	SendEvents:    true,
-	Capacity:      1000,
-	FlushInterval: 1 * time.Hour,
+	SendEvents:       true,
+	Capacity:         1000,
+	FlushInterval:    1 * time.Hour,
+	UserKeysCapacity: 1000,
 }
 
 const (

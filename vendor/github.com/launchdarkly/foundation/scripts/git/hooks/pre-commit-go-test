@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-echo "Running tests..."
-exec govendor test +local
-
