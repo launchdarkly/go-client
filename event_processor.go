@@ -148,10 +148,10 @@ func (ep *eventProcessor) flush() {
 	ep.queue = make([]interface{}, 0)
 	ep.mu.Unlock()
 
-	summaryData := ep.summarizer.flush()
-	if len(summaryData.Counters) > 0 {
+	summaryState := ep.summarizer.snapshot()
+	if len(summaryState.counters) > 0 {
 		se := summaryEventOutput{
-			summaryOutput: summaryData,
+			summaryOutput: ep.summarizer.output(summaryState),
 			Kind:          SUMMARY_EVENT,
 		}
 		// note that the queue size limit does not include the summary event, if any
@@ -293,7 +293,7 @@ func (ep *eventProcessor) dedupUser(evt Event) (string, *User) {
 	if _, ok := evt.(IdentifyEvent); ok {
 		return "", nil
 	}
-	user := scrubUser(evt.GetBase().User, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
+	user := evt.GetBase().User
 	var userKey string
 	if user.Key != nil {
 		userKey = *user.Key
@@ -301,7 +301,7 @@ func (ep *eventProcessor) dedupUser(evt Event) (string, *User) {
 	if ep.summarizer.noticeUser(user) {
 		return userKey, nil
 	} else {
-		return userKey, user
+		return userKey, scrubUser(user, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
 	}
 }
 

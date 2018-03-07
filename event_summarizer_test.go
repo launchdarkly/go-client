@@ -85,7 +85,7 @@ func TestSummarizeEventSetsStartAndEndDates(t *testing.T) {
 	event3.BaseEvent.CreationDate = 1500
 	es.summarizeEvent(event1)
 	es.summarizeEvent(event2)
-	data := es.flush()
+	data := es.output(es.snapshot())
 
 	assert.Equal(t, uint64(1000), data.StartDate)
 	assert.Equal(t, uint64(2000), data.EndDate)
@@ -104,46 +104,51 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 	unknownFlagKey := "badkey"
 	variation1 := 1
 	variation2 := 2
-	event1 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation1, "value1", nil, nil)
-	event2 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation2, "value2", nil, nil)
-	event3 := NewFeatureRequestEvent(flag2.Key, &flag2, user, &variation1, "value99", nil, nil)
-	event4 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation1, "value1", nil, nil)
-	event5 := NewFeatureRequestEvent(unknownFlagKey, nil, user, nil, nil, nil, nil)
+	event1 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation1, "value1", "default1", nil)
+	event2 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation2, "value2", "default1", nil)
+	event3 := NewFeatureRequestEvent(flag2.Key, &flag2, user, &variation1, "value99", "default2", nil)
+	event4 := NewFeatureRequestEvent(flag1.Key, &flag1, user, &variation1, "value1", "default1", nil)
+	event5 := NewFeatureRequestEvent(unknownFlagKey, nil, user, nil, nil, "default3", nil)
 	es.summarizeEvent(event1)
 	es.summarizeEvent(event2)
 	es.summarizeEvent(event3)
 	es.summarizeEvent(event4)
 	es.summarizeEvent(event5)
-	data := es.flush()
+	data := es.output(es.snapshot())
 
-	assert.Equal(t, 4, len(data.Counters))
-	result1 := findCounter(data.Counters, flag1.Key, "value1")
-	assert.NotNil(t, result1)
-	assert.Equal(t, flag1.Key, result1.Key)
-	assert.Equal(t, flag1.Version, *result1.Version)
-	assert.Equal(t, 2, result1.Count)
-	assert.Nil(t, result1.Unknown)
-	result2 := findCounter(data.Counters, flag1.Key, "value2")
-	assert.NotNil(t, result2)
-	assert.Equal(t, flag1.Key, result2.Key)
-	assert.Equal(t, flag1.Version, *result2.Version)
-	assert.Equal(t, 1, result2.Count)
-	assert.Nil(t, result2.Unknown)
-	result3 := findCounter(data.Counters, flag2.Key, "value99")
-	assert.Equal(t, flag2.Key, result3.Key)
-	assert.Equal(t, flag2.Version, *result3.Version)
-	assert.Equal(t, 1, result3.Count)
-	assert.Nil(t, result3.Unknown)
-	result4 := findCounter(data.Counters, unknownFlagKey, nil)
-	assert.Equal(t, unknownFlagKey, result4.Key)
-	assert.Nil(t, result4.Version)
-	assert.Equal(t, 1, result4.Count)
-	assert.True(t, *result4.Unknown)
+	assert.Equal(t, 3, len(data.Features))
+
+	df1 := data.Features[flag1.Key]
+	assert.NotNil(t, df1)
+	assert.Equal(t, "default1", df1.Default)
+	assert.Equal(t, 2, len(df1.Counters))
+	df1c1 := findCounter(df1.Counters, "value1")
+	assert.NotNil(t, df1c1)
+	assert.Equal(t, flag1.Version, *df1c1.Version)
+	assert.Equal(t, 2, df1c1.Count)
+	df1c2 := findCounter(df1.Counters, "value2")
+	assert.NotNil(t, df1c2)
+	assert.Equal(t, flag1.Version, *df1c2.Version)
+	assert.Equal(t, 1, df1c2.Count)
+
+	df2 := data.Features[flag2.Key]
+	assert.NotNil(t, df2)
+	assert.Equal(t, "default2", df2.Default)
+	assert.Equal(t, 1, len(df2.Counters))
+	assert.Equal(t, "value99", df2.Counters[0].Value)
+	assert.Equal(t, flag2.Version, *df2.Counters[0].Version)
+	assert.Nil(t, df2.Counters[0].Unknown)
+
+	df3 := data.Features[unknownFlagKey]
+	assert.NotNil(t, df3)
+	assert.Equal(t, "default3", df3.Default)
+	assert.Equal(t, 1, len(df3.Counters))
+	assert.Equal(t, true, *df3.Counters[0].Unknown)
 }
 
-func findCounter(counters []counterData, key string, value interface{}) *counterData {
+func findCounter(counters []flagCounterData, value interface{}) *flagCounterData {
 	for _, c := range counters {
-		if c.Key == key && c.Value == value {
+		if c.Value == value {
 			return &c
 		}
 	}
