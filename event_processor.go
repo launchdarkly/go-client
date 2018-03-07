@@ -34,6 +34,7 @@ type featureRequestEventOutput struct {
 	Default      interface{} `json:"default"`
 	Version      *int        `json:"version,omitempty"`
 	PrereqOf     *string     `json:"prereqOf,omitempty"`
+	Debug        *bool       `json:"debug,omitempty"`
 }
 
 // Serializable form of an identify event.
@@ -242,6 +243,10 @@ func (ep *eventProcessor) sendEvent(evt Event) error {
 			Default:      evt.Default,
 			Version:      evt.Version,
 			PrereqOf:     evt.PrereqOf,
+		}
+		if !evt.TrackEvents && evt.DebugEventsUntilDate != nil {
+			debug := true
+			fe.Debug = &debug
 		}
 		eventOutput = fe
 	case CustomEvent:
