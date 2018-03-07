@@ -26,11 +26,12 @@ var BuiltinAttributes = []string{
 }
 
 var epDefaultConfig = Config{
-	SendEvents:       true,
-	Capacity:         1000,
-	FlushInterval:    1 * time.Hour,
-	Logger:           log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
-	UserKeysCapacity: 1000,
+	SendEvents:            true,
+	Capacity:              1000,
+	FlushInterval:         1 * time.Hour,
+	Logger:                log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
+	UserKeysCapacity:      1000,
+	UserKeysFlushInterval: 1 * time.Hour,
 }
 
 const (
@@ -95,6 +96,42 @@ func TestIndividualFeatureEventIsQueuedWithIndexEvent(t *testing.T) {
 	assert.Equal(t, float64(flag.Version), feo["version"])
 	assert.Equal(t, value, feo["value"])
 	assert.Equal(t, *user.Key, feo["userKey"])
+	assert.Nil(t, feo["debug"])
+}
+
+func TestDebugFlagIsSetIfFlagIsTemporarilyInDebugMode(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+
+	user := NewUser("userkey")
+	user.Name = strPtr("Red")
+	futureTime := now() + 1000000
+	flag := FeatureFlag{
+		Key:                  "flagkey",
+		Version:              11,
+		TrackEvents:          false,
+		DebugEventsUntilDate: &futureTime,
+	}
+	variation := 1
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, user, &variation, value, nil, nil)
+	ep.sendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 2, len(output))
+
+	ieo := output[0]
+	assert.Equal(t, "index", ieo["kind"])
+	assert.Equal(t, jsonMap(user), ieo["user"])
+
+	feo := output[1]
+	assert.Equal(t, "feature", feo["kind"])
+	assert.Equal(t, float64(fe.CreationDate), feo["creationDate"])
+	assert.Equal(t, flag.Key, feo["key"])
+	assert.Equal(t, float64(flag.Version), feo["version"])
+	assert.Equal(t, value, feo["value"])
+	assert.Equal(t, *user.Key, feo["userKey"])
+	assert.Equal(t, true, feo["debug"])
 }
 
 func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {

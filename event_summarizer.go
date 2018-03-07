@@ -60,6 +60,11 @@ func (s *eventSummarizer) noticeUser(user *User) bool {
 	return false
 }
 
+// Clears the set of users we've noticed.
+func (s *eventSummarizer) resetUsers() {
+	s.userKeysSeen = make(map[string]struct{})
+}
+
 // Check whether this is a kind of event that we should summarize; if so, add it to our
 // counters and return true. False means that the event should be sent individually.
 func (s *eventSummarizer) summarizeEvent(evt Event) bool {
@@ -69,14 +74,15 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 		return false
 	}
 	if fe.TrackEvents {
-		if fe.TrackEventsExpirationDate == nil {
-			return false
-		}
+		return false
+	}
+
+	if fe.DebugEventsUntilDate != nil {
 		// The "last known past time" comes from the last HTTP response we got from the server.
 		// In case the client's time is set wrong, at least we know that any expiration date
 		// earlier than that point is definitely in the past.
-		if *fe.TrackEventsExpirationDate > s.lastKnownPastTime &&
-			*fe.TrackEventsExpirationDate > now() {
+		if *fe.DebugEventsUntilDate > s.lastKnownPastTime &&
+			*fe.DebugEventsUntilDate > now() {
 			return false
 		}
 	}
@@ -119,12 +125,16 @@ func (s *eventSummarizer) setLastKnownPastTime(t uint64) {
 
 // Transforms all current counters into the format used for event sending, then clears them.
 func (s *eventSummarizer) flush() summaryOutput {
-	// Reset the set of users we've seen
-	s.userKeysSeen = make(map[string]struct{})
+	counters := s.counters
+	startDate := s.startDate
+	endDate := s.endDate
+	s.counters = make(map[counterKey]*counterValue)
+	s.startDate = 0
+	s.endDate = 0
 
-	counters := make([]counterData, len(s.counters))
+	countersOut := make([]counterData, len(counters))
 	i := 0
-	for key, value := range s.counters {
+	for key, value := range counters {
 		data := counterData{
 			Key:   key.key,
 			Value: value.flagValue,
@@ -137,18 +147,13 @@ func (s *eventSummarizer) flush() summaryOutput {
 			version := key.version
 			data.Version = &version
 		}
-		counters[i] = data
+		countersOut[i] = data
 		i++
 	}
-	s.counters = make(map[counterKey]*counterValue)
 
-	ret := summaryOutput{
-		StartDate: s.startDate,
-		EndDate:   s.endDate,
-		Counters:  counters,
+	return summaryOutput{
+		StartDate: startDate,
+		EndDate:   endDate,
+		Counters:  countersOut,
 	}
-	s.startDate = 0
-	s.endDate = 0
-
-	return ret
 }

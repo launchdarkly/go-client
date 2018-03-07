@@ -51,7 +51,11 @@ type Config struct {
 	AllAttributesPrivate  bool
 	PrivateAttributeNames []string
 	UpdateProcessor       UpdateProcessor
-	UserKeysCapacity      int
+	// The number of user keys that the event processor can remember at any one time, so that
+	// duplicate user details will not be sent in analytics events.
+	UserKeysCapacity int
+	// The interval at which the event processor will reset its set of known user keys.
+	UserKeysFlushInterval time.Duration
 }
 
 // The minimum value for Config.PollInterval. If you specify a smaller interval,
@@ -70,20 +74,21 @@ type UpdateProcessor interface {
 //   var config = DefaultConfig
 //   config.Capacity = 2000
 var DefaultConfig = Config{
-	BaseUri:          "https://app.launchdarkly.com",
-	StreamUri:        "https://stream.launchdarkly.com",
-	EventsUri:        "https://events.launchdarkly.com",
-	Capacity:         1000,
-	FlushInterval:    5 * time.Second,
-	PollInterval:     MinimumPollInterval,
-	Logger:           log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
-	Timeout:          3000 * time.Millisecond,
-	Stream:           true,
-	FeatureStore:     nil,
-	UseLdd:           false,
-	SendEvents:       true,
-	Offline:          false,
-	UserKeysCapacity: 1000,
+	BaseUri:               "https://app.launchdarkly.com",
+	StreamUri:             "https://stream.launchdarkly.com",
+	EventsUri:             "https://events.launchdarkly.com",
+	Capacity:              1000,
+	FlushInterval:         5 * time.Second,
+	PollInterval:          MinimumPollInterval,
+	Logger:                log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
+	Timeout:               3000 * time.Millisecond,
+	Stream:                true,
+	FeatureStore:          nil,
+	UseLdd:                false,
+	SendEvents:            true,
+	Offline:               false,
+	UserKeysCapacity:      1000,
+	UserKeysFlushInterval: 5 * time.Minute,
 }
 
 var ErrInitializationTimeout = errors.New("Timeout encountered waiting for LaunchDarkly client initialization")
