@@ -15,14 +15,14 @@ type BaseEvent struct {
 
 type FeatureRequestEvent struct {
 	BaseEvent
-	Key                       string
-	Variation                 *int
-	Value                     interface{}
-	Default                   interface{}
-	Version                   *int
-	PrereqOf                  *string
-	TrackEvents               bool
-	TrackEventsExpirationDate *uint64
+	Key                  string
+	Variation            *int
+	Value                interface{}
+	Default              interface{}
+	Version              *int
+	PrereqOf             *string
+	TrackEvents          bool
+	DebugEventsUntilDate *uint64
 }
 
 type CustomEvent struct {
@@ -52,7 +52,7 @@ func NewFeatureRequestEvent(key string, flag *FeatureFlag, user User, variation 
 	if flag != nil {
 		fre.Version = &flag.Version
 		fre.TrackEvents = flag.TrackEvents
-		fre.TrackEventsExpirationDate = flag.TrackEventsExpirationDate
+		fre.DebugEventsUntilDate = flag.DebugEventsUntilDate
 	}
 	return fre
 }

@@ -81,19 +81,19 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 	if fe, ok = evt.(FeatureRequestEvent); !ok {
 		return false
 	}
-	if fe.TrackEvents && fe.TrackEventsExpirationDate == nil {
+	if fe.TrackEvents {
 		return false
 	}
 
 	s.flagsLock.Lock()
 	defer s.flagsLock.Unlock()
 
-	if fe.TrackEvents && fe.TrackEventsExpirationDate != nil {
+	if fe.DebugEventsUntilDate != nil {
 		// The "last known past time" comes from the last HTTP response we got from the server.
 		// In case the client's time is set wrong, at least we know that any expiration date
 		// earlier than that point is definitely in the past.
-		if *fe.TrackEventsExpirationDate > s.lastKnownPastTime &&
-			*fe.TrackEventsExpirationDate > now() {
+		if *fe.DebugEventsUntilDate > s.lastKnownPastTime &&
+			*fe.DebugEventsUntilDate > now() {
 			return false
 		}
 	}
