@@ -206,8 +206,10 @@ func (ep *eventProcessor) flushInternal() error {
 			return err
 		}
 	} else {
-		t, _ := http.ParseTime(resp.Header.Get("Date"))
-		ep.summarizer.setLastKnownPastTime(toUnixMillis(t))
+		t, err := http.ParseTime(resp.Header.Get("Date"))
+		if err == nil {
+			ep.summarizer.setLastKnownPastTime(toUnixMillis(t))
+		}
 	}
 	return nil
 }

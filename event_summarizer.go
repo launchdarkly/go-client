@@ -5,7 +5,7 @@ package ldclient
 // deliberately not thread-safe, because they should always be called from EventProcessor's
 // single event-processing goroutine.
 type eventSummarizer struct {
-	currentFlags      map[counterKey]*counterValue
+	counters          map[counterKey]*counterValue
 	startDate         uint64
 	endDate           uint64
 	lastKnownPastTime uint64
@@ -15,8 +15,8 @@ type eventSummarizer struct {
 
 type counterKey struct {
 	key       string
-	variation *int
-	version   *int
+	variation int
+	version   int
 }
 
 type counterValue struct {
@@ -27,8 +27,9 @@ type counterValue struct {
 type counterData struct {
 	Key     string      `json:"key"`
 	Value   interface{} `json:"value"`
-	Version *int        `json:"version"`
+	Version *int        `json:"version,omitempty"`
 	Count   int         `json:"count"`
+	Unknown *bool       `json:"unknown,omitempty"`
 }
 
 type summaryOutput struct {
@@ -39,7 +40,7 @@ type summaryOutput struct {
 
 func NewEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
-		currentFlags: make(map[counterKey]*counterValue),
+		counters:     make(map[counterKey]*counterValue),
 		userKeysSeen: make(map[string]struct{}),
 		userCapacity: config.UserKeysCapacity,
 	}
@@ -68,10 +69,9 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 		return false
 	}
 	if fe.TrackEvents {
-		return false
-	}
-
-	if fe.TrackEventsExpirationDate != nil {
+		if fe.TrackEventsExpirationDate == nil {
+			return false
+		}
 		// The "last known past time" comes from the last HTTP response we got from the server.
 		// In case the client's time is set wrong, at least we know that any expiration date
 		// earlier than that point is definitely in the past.
@@ -81,16 +81,18 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 		}
 	}
 
-	key := counterKey{
-		key:       fe.Key,
-		variation: fe.Variation,
-		version:   fe.Version,
+	key := counterKey{key: fe.Key}
+	if fe.Variation != nil {
+		key.variation = *fe.Variation
+	}
+	if fe.Version != nil {
+		key.version = *fe.Version
 	}
 
-	if value, ok := s.currentFlags[key]; ok {
+	if value, ok := s.counters[key]; ok {
 		value.count++
 	} else {
-		s.currentFlags[key] = &counterValue{
+		s.counters[key] = &counterValue{
 			count:     1,
 			flagValue: fe.Value,
 		}
@@ -120,18 +122,25 @@ func (s *eventSummarizer) flush() summaryOutput {
 	// Reset the set of users we've seen
 	s.userKeysSeen = make(map[string]struct{})
 
-	counters := make([]counterData, len(s.currentFlags))
+	counters := make([]counterData, len(s.counters))
 	i := 0
-	for key, value := range s.currentFlags {
-		counters[i] = counterData{
-			Key:     key.key,
-			Value:   value.flagValue,
-			Version: key.version,
-			Count:   value.count,
+	for key, value := range s.counters {
+		data := counterData{
+			Key:   key.key,
+			Value: value.flagValue,
+			Count: value.count,
 		}
+		if key.version == 0 {
+			unknown := true
+			data.Unknown = &unknown
+		} else {
+			version := key.version
+			data.Version = &version
+		}
+		counters[i] = data
 		i++
 	}
-	s.currentFlags = make(map[counterKey]*counterValue)
+	s.counters = make(map[counterKey]*counterValue)
 
 	ret := summaryOutput{
 		StartDate: s.startDate,
