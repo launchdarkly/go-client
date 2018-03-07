@@ -7,7 +7,7 @@ import (
 // Manages the state of summarizable information for the EventProcessor, including the
 // event counters and user deduplication.
 type eventSummarizer struct {
-	currentFlags      map[counterKey]*counterValue
+	counters          map[counterKey]*counterValue
 	startDate         uint64
 	endDate           uint64
 	lastKnownPastTime uint64
@@ -43,7 +43,7 @@ type summaryOutput struct {
 
 func NewEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
-		currentFlags: make(map[counterKey]*counterValue),
+		counters:     make(map[counterKey]*counterValue),
 		userKeysSeen: make(map[string]struct{}),
 		userCapacity: config.UserKeysCapacity,
 		flagsLock:    &sync.Mutex{},
@@ -99,10 +99,10 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 		key.version = *fe.Version
 	}
 
-	if value, ok := s.currentFlags[key]; ok {
+	if value, ok := s.counters[key]; ok {
 		value.count++
 	} else {
-		s.currentFlags[key] = &counterValue{
+		s.counters[key] = &counterValue{
 			count:     1,
 			flagValue: fe.Value,
 		}
@@ -137,9 +137,9 @@ func (s *eventSummarizer) flush() summaryOutput {
 	// Reset the set of users we've seen
 	s.userKeysSeen = make(map[string]struct{})
 
-	counters := make([]counterData, len(s.currentFlags))
+	counters := make([]counterData, len(s.counters))
 	i := 0
-	for key, value := range s.currentFlags {
+	for key, value := range s.counters {
 		data := counterData{
 			Key:   key.key,
 			Value: value.flagValue,
@@ -155,7 +155,7 @@ func (s *eventSummarizer) flush() summaryOutput {
 		counters[i] = data
 		i++
 	}
-	s.currentFlags = make(map[counterKey]*counterValue)
+	s.counters = make(map[counterKey]*counterValue)
 
 	ret := summaryOutput{
 		StartDate: s.startDate,
