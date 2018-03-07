@@ -95,13 +95,25 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 			res.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 		}
 
-		ticker := time.NewTicker(config.FlushInterval)
+		flushInterval := config.FlushInterval
+		if flushInterval <= 0 {
+			flushInterval = DefaultConfig.FlushInterval
+		}
+		userKeysFlushInterval := config.UserKeysFlushInterval
+		if userKeysFlushInterval <= 0 {
+			userKeysFlushInterval = DefaultConfig.UserKeysFlushInterval
+		}
+		flushTicker := time.NewTicker(flushInterval)
+		usersResetTicker := time.NewTicker(userKeysFlushInterval)
 		for {
 			select {
-			case <-ticker.C:
+			case <-flushTicker.C:
 				res.flush()
+			case <-usersResetTicker.C:
+				res.summarizer.resetUsers()
 			case <-res.closer:
-				ticker.Stop()
+				flushTicker.Stop()
+				usersResetTicker.Stop()
 				return
 			}
 		}

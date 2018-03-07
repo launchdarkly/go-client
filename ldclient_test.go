@@ -189,14 +189,15 @@ func TestSecureModeHash(t *testing.T) {
 // fallthrough value when passing in a valid user
 func makeClientWithFeatureFlag(variations []interface{}) *LDClient {
 	config := Config{
-		BaseUri:       "https://localhost:3000",
-		Capacity:      1000,
-		FlushInterval: 5 * time.Second,
-		Logger:        log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
-		Timeout:       1500 * time.Millisecond,
-		Stream:        true,
-		Offline:       false,
-		SendEvents:    false,
+		BaseUri:               "https://localhost:3000",
+		Capacity:              1000,
+		FlushInterval:         5 * time.Second,
+		Logger:                log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
+		Timeout:               1500 * time.Millisecond,
+		Stream:                true,
+		Offline:               false,
+		SendEvents:            false,
+		UserKeysFlushInterval: 30 * time.Second,
 	}
 
 	client := LDClient{
