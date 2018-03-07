@@ -322,7 +322,9 @@ func (ep *eventProcessor) queueEventOutput(eventOutput interface{}) error {
 		return nil
 	}
 	if len(ep.queue) >= ep.config.Capacity {
-		return errors.New("Exceeded event queue capacity. Increase capacity to avoid dropping events.")
+		message := "Exceeded event queue capacity. Increase capacity to avoid dropping events."
+		ep.config.Logger.Printf("WARN: %s", message)
+		return errors.New(message)
 	}
 	ep.queue = append(ep.queue, eventOutput)
 	return nil
