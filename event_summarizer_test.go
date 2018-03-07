@@ -35,6 +35,7 @@ func TestUsersNotDeduplicatedIfCapacityExceeded(t *testing.T) {
 	user3 := NewUser("key3")
 	es.noticeUser(&user1)
 	es.noticeUser(&user2)
+	es.noticeUser(&user3)
 	result := es.noticeUser(&user3)
 	assert.False(t, result)
 }
