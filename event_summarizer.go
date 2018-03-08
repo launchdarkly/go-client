@@ -1,6 +1,7 @@
 package ldclient
 
 import (
+	"container/list"
 	"sync"
 )
 
@@ -9,7 +10,8 @@ import (
 type eventSummarizer struct {
 	eventsState       summaryEventsState
 	lastKnownPastTime uint64
-	userKeysSeen      map[string]struct{}
+	userKeysSeen      map[string]*list.Element
+	userKeysLru       *list.List
 	userCapacity      int
 	flagsLock         *sync.Mutex
 }
@@ -53,7 +55,8 @@ type summaryOutput struct {
 func NewEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
 		eventsState:  newSummaryEventsState(),
-		userKeysSeen: make(map[string]struct{}),
+		userKeysSeen: make(map[string]*list.Element),
+		userKeysLru:  list.New(),
 		userCapacity: config.UserKeysCapacity,
 		flagsLock:    &sync.Mutex{},
 	}
@@ -72,12 +75,17 @@ func (s *eventSummarizer) noticeUser(user *User) bool {
 	}
 	s.flagsLock.Lock()
 	defer s.flagsLock.Unlock()
-	if _, ok := s.userKeysSeen[*user.Key]; ok {
+	if e, ok := s.userKeysSeen[*user.Key]; ok {
+		s.userKeysLru.MoveToFront(e)
 		return true
 	}
-	if len(s.userKeysSeen) < s.userCapacity {
-		s.userKeysSeen[*user.Key] = struct{}{}
+	for len(s.userKeysSeen) >= s.userCapacity {
+		oldest := s.userKeysLru.Back()
+		delete(s.userKeysSeen, oldest.Value.(string))
+		s.userKeysLru.Remove(oldest)
 	}
+	e := s.userKeysLru.PushFront(*user.Key)
+	s.userKeysSeen[*user.Key] = e
 	return false
 }
 
@@ -85,7 +93,8 @@ func (s *eventSummarizer) noticeUser(user *User) bool {
 func (s *eventSummarizer) resetUsers() {
 	s.flagsLock.Lock()
 	defer s.flagsLock.Unlock()
-	s.userKeysSeen = make(map[string]struct{})
+	s.userKeysSeen = make(map[string]*list.Element)
+	s.userKeysLru.Init()
 }
 
 // Check whether this is a kind of event that we should summarize; if so, add it to our
