@@ -139,7 +139,7 @@ func (s *eventSummarizer) snapshot() summaryEventsState {
 }
 
 // Transforms the summary data into the format used for event sending.
-func (s *eventSummarizer) output(snapshot summaryEventsState) summaryOutput {
+func makeSummaryOutput(snapshot summaryEventsState) summaryOutput {
 	features := make(map[string]flagSummaryData)
 	for key, value := range snapshot.counters {
 		var flagData flagSummaryData

@@ -191,7 +191,7 @@ func (ep *eventProcessor) flushInternal(events []interface{}, summaryState summa
 
 	if len(summaryState.counters) > 0 {
 		se := summaryEventOutput{
-			summaryOutput: ep.summarizer.output(summaryState),
+			summaryOutput: makeSummaryOutput(summaryState),
 			Kind:          SUMMARY_EVENT,
 		}
 		outputEvents = append(outputEvents, se)

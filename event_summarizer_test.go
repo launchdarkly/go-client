@@ -87,7 +87,7 @@ func TestSummarizeEventSetsStartAndEndDates(t *testing.T) {
 	event3.BaseEvent.CreationDate = 1500
 	es.summarizeEvent(event1)
 	es.summarizeEvent(event2)
-	data := es.output(es.snapshot())
+	data := makeSummaryOutput(es.snapshot())
 
 	assert.Equal(t, uint64(1000), data.StartDate)
 	assert.Equal(t, uint64(2000), data.EndDate)
@@ -116,7 +116,7 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 	es.summarizeEvent(event3)
 	es.summarizeEvent(event4)
 	es.summarizeEvent(event5)
-	data := es.output(es.snapshot())
+	data := makeSummaryOutput(es.snapshot())
 
 	unknownTrue := true
 	sort.Sort(CountersByValue(data.Features[flag1.Key].Counters))
