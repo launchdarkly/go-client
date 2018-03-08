@@ -123,7 +123,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 	}
 
 	if config.Offline {
-		config.Logger.Println("Started Launchdarkly in offline mode")
+		config.Logger.Println("Started LaunchDarkly in offline mode")
 		client.config.SendEvents = false
 		return &client, nil
 	}
@@ -131,7 +131,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 	client.eventProcessor = newEventProcessor(sdkKey, config, nil)
 
 	if config.UseLdd {
-		config.Logger.Println("Started Launchdarkly in LDD mode")
+		config.Logger.Println("Started LaunchDarkly in LDD mode")
 		return &client, nil
 	}
 
@@ -154,7 +154,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 			return &client, nil
 		case <-timeout:
 			if waitFor > 0 {
-				config.Logger.Println("Timeout exceeded when initializing LauncDarkly client.")
+				config.Logger.Println("Timeout exceeded when initializing LaunchDarkly client.")
 				return &client, ErrInitializationTimeout
 			}
 
