@@ -298,7 +298,7 @@ func (ep *eventProcessor) dedupUser(evt Event) (string, *User) {
 	if user.Key != nil {
 		userKey = *user.Key
 	}
-	if ep.summarizer.noticeUser(user) {
+	if ep.summarizer.noticeUser(&user) {
 		return userKey, nil
 	} else {
 		return userKey, scrubUser(user, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
