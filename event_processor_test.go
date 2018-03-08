@@ -2,8 +2,11 @@ package ldclient
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
+	"os"
 	"sort"
 	"testing"
 	"time"
@@ -22,10 +25,11 @@ var BuiltinAttributes = []string{
 	"secondary",
 }
 
-var defaultConfig = Config{
+var epDefaultConfig = Config{
 	SendEvents:            true,
 	Capacity:              1000,
 	FlushInterval:         1 * time.Hour,
+	Logger:                log.New(os.Stderr, "[LaunchDarkly]", log.LstdFlags),
 	UserKeysCapacity:      1000,
 	UserKeysFlushInterval: 1 * time.Hour,
 }
@@ -36,6 +40,8 @@ const (
 
 type stubTransport struct {
 	messageSent *http.Request
+	statusCode  int
+	error       error
 }
 
 func init() {
@@ -43,7 +49,7 @@ func init() {
 }
 
 func TestIdentifyEventIsQueued(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -54,14 +60,17 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
 
-	ieo := jsonMap(output[0])
-	assert.Equal(t, "identify", ieo["kind"])
-	assert.Equal(t, float64(ie.CreationDate), ieo["creationDate"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	ieo := output[0]
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "identify",
+		"creationDate": float64(ie.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 }
 
 func TestIndividualFeatureEventIsQueuedWithIndexEvent(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -80,21 +89,28 @@ func TestIndividualFeatureEventIsQueuedWithIndexEvent(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	feo := output[1]
-	assert.Equal(t, "feature", feo["kind"])
-	assert.Equal(t, float64(fe.CreationDate), feo["creationDate"])
-	assert.Equal(t, flag.Key, feo["key"])
-	assert.Equal(t, float64(flag.Version), feo["version"])
-	assert.Equal(t, value, feo["value"])
-	assert.Equal(t, *user.Key, feo["userKey"])
-	assert.Nil(t, feo["debug"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe.CreationDate),
+		"key":          flag.Key,
+		"version":      float64(flag.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, feo)
 }
 
 func TestDebugFlagIsSetIfFlagIsTemporarilyInDebugMode(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -115,21 +131,29 @@ func TestDebugFlagIsSetIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	feo := output[1]
-	assert.Equal(t, "feature", feo["kind"])
-	assert.Equal(t, float64(fe.CreationDate), feo["creationDate"])
-	assert.Equal(t, flag.Key, feo["key"])
-	assert.Equal(t, float64(flag.Version), feo["version"])
-	assert.Equal(t, value, feo["value"])
-	assert.Equal(t, *user.Key, feo["userKey"])
-	assert.Equal(t, true, feo["debug"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe.CreationDate),
+		"key":          flag.Key,
+		"version":      float64(flag.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+		"debug":        true,
+	})
+	assert.Equal(t, expected, feo)
 }
 
 func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -155,28 +179,40 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 	assert.Equal(t, 3, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe1.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	feo1 := output[1]
-	assert.Equal(t, "feature", feo1["kind"])
-	assert.Equal(t, float64(fe1.CreationDate), feo1["creationDate"])
-	assert.Equal(t, flag1.Key, feo1["key"])
-	assert.Equal(t, float64(flag1.Version), feo1["version"])
-	assert.Equal(t, value, feo1["value"])
-	assert.Equal(t, *user.Key, feo1["userKey"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe1.CreationDate),
+		"key":          flag1.Key,
+		"version":      float64(flag1.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, feo1)
 
 	feo2 := output[2]
-	assert.Equal(t, "feature", feo2["kind"])
-	assert.Equal(t, float64(fe2.CreationDate), feo2["creationDate"])
-	assert.Equal(t, flag2.Key, feo2["key"])
-	assert.Equal(t, float64(flag2.Version), feo2["version"])
-	assert.Equal(t, value, feo2["value"])
-	assert.Equal(t, *user.Key, feo2["userKey"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe2.CreationDate),
+		"key":          flag2.Key,
+		"version":      float64(flag2.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, feo2)
 }
 
 func TestNonTrackedEventsAreSummarized(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -202,19 +238,46 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe1.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	seo := output[1]
-	assert.Equal(t, "summary", seo["kind"])
-	assert.Equal(t, float64(fe1.CreationDate), seo["startDate"])
-	assert.Equal(t, float64(fe2.CreationDate), seo["endDate"])
-	counters := seo["counters"].([]interface{})
-	assert.Equal(t, 2, len(counters))
+	expected = jsonMap(map[string]interface{}{
+		"kind":      "summary",
+		"startDate": float64(fe1.CreationDate),
+		"endDate":   float64(fe2.CreationDate),
+		"features": map[string]interface{}{
+			flag1.Key: map[string]interface{}{
+				"default": nil,
+				"counters": []interface{}{
+					map[string]interface{}{
+						"version": float64(flag1.Version),
+						"value":   value,
+						"count":   1,
+					},
+				},
+			},
+			flag2.Key: map[string]interface{}{
+				"default": nil,
+				"counters": []interface{}{
+					map[string]interface{}{
+						"version": float64(flag2.Version),
+						"value":   value,
+						"count":   1,
+					},
+				},
+			},
+		},
+	})
+	assert.Equal(t, expected, seo)
 }
 
 func TestCustomEventIsQueuedWithUser(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -229,19 +292,42 @@ func TestCustomEventIsQueuedWithUser(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := jsonMap(output[0])
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(ce.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	ceo := jsonMap(output[1])
-	assert.Equal(t, "custom", ceo["kind"])
-	assert.Equal(t, float64(ce.CreationDate), ceo["creationDate"])
-	assert.Equal(t, ce.Key, ceo["key"])
-	assert.Equal(t, data, ceo["data"])
-	assert.Equal(t, *user.Key, ceo["userKey"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "custom",
+		"creationDate": float64(ce.CreationDate),
+		"key":          ce.Key,
+		"data":         data,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, ceo)
+}
+
+func TestSendEventSyncReturnsErrorIfQueueFull(t *testing.T) {
+	config := epDefaultConfig
+	config.Capacity = 1
+	ep, _ := createEventProcessor(config)
+	defer ep.close()
+
+	user := NewUser("userkey")
+	user.Name = strPtr("Red")
+	ie := NewIdentifyEvent(user)
+	err := ep.sendEventSync(ie)
+	assert.NoError(t, err)
+
+	err = ep.sendEventSync(ie)
+	assert.Error(t, err)
 }
 
 func TestSdkKeyIsSent(t *testing.T) {
-	ep, st := createEventProcessor(defaultConfig)
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
 	user := NewUser("userkey")
@@ -251,6 +337,37 @@ func TestSdkKeyIsSent(t *testing.T) {
 
 	ep.flush()
 	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
+}
+
+func TestFlushReturnsHttpGeneralError(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+
+	expectedErr := fmt.Errorf("problems")
+	st.error = expectedErr
+
+	user := NewUser("userkey")
+	user.Name = strPtr("Red")
+	ie := NewIdentifyEvent(user)
+	ep.sendEvent(ie)
+
+	err := ep.flush()
+	assert.Equal(t, "Post /bulk: "+expectedErr.Error(), err.Error())
+}
+
+func TestFlushReturnsHttpResponseError(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+
+	st.statusCode = 400
+
+	user := NewUser("userkey")
+	user.Name = strPtr("Red")
+	ie := NewIdentifyEvent(user)
+	ep.sendEvent(ie)
+
+	err := ep.flush()
+	assert.NoError(t, err)
 }
 
 func TestScrubUser(t *testing.T) {
@@ -364,7 +481,9 @@ func jsonMap(o interface{}) map[string]interface{} {
 }
 
 func createEventProcessor(config Config) (*eventProcessor, *stubTransport) {
-	transport := &stubTransport{}
+	transport := &stubTransport{
+		statusCode: 200,
+	}
 	client := &http.Client{
 		Transport: transport,
 	}
@@ -386,8 +505,11 @@ func flushAndGetEvents(ep *eventProcessor, st *stubTransport) (output []map[stri
 
 func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.messageSent = request
+	if t.error != nil {
+		return nil, t.error
+	}
 	resp := http.Response{
-		StatusCode: 200,
+		StatusCode: t.statusCode,
 	}
 	return &resp, nil
 }

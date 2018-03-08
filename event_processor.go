@@ -15,11 +15,21 @@ type eventProcessor struct {
 	queue      []interface{}
 	sdkKey     string
 	config     Config
-	closed     bool
-	mu         *sync.Mutex
+	eventsUri  string
 	client     *http.Client
+	eventsIn   chan eventInput
+	timeCh     chan uint64
 	closer     chan struct{}
+	closeOnce  sync.Once
+	closed     bool
 	summarizer *eventSummarizer
+}
+
+// Payload of the eventsIn channel. If event is nil, this is a flush request. The reply
+// channel is non-nil if the caller has requested a reply.
+type eventInput struct {
+	event Event
+	reply chan error
 }
 
 // Serializable form of a feature request event. This differs from the event that was
@@ -29,7 +39,7 @@ type featureRequestEventOutput struct {
 	Kind         string      `json:"kind"`
 	CreationDate uint64      `json:"creationDate"`
 	Key          string      `json:"key"`
-	UserKey      string      `json:"userKey"`
+	UserKey      *string     `json:"userKey"`
 	Value        interface{} `json:"value"`
 	Default      interface{} `json:"default"`
 	Version      *int        `json:"version,omitempty"`
@@ -49,7 +59,7 @@ type customEventOutput struct {
 	Kind         string      `json:"kind"`
 	CreationDate uint64      `json:"creationDate"`
 	Key          string      `json:"key"`
-	UserKey      string      `json:"userKey"`
+	UserKey      *string     `json:"userKey"`
 	Data         interface{} `json:"data"`
 }
 
@@ -85,9 +95,11 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		queue:      make([]interface{}, 0),
 		sdkKey:     sdkKey,
 		config:     config,
+		eventsUri:  config.EventsUri + "/bulk",
 		client:     client,
+		eventsIn:   make(chan eventInput, 100),
+		timeCh:     make(chan uint64),
 		closer:     make(chan struct{}),
-		mu:         &sync.Mutex{},
 		summarizer: NewEventSummarizer(config),
 	}
 
@@ -108,13 +120,24 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		usersResetTicker := time.NewTicker(userKeysFlushInterval)
 		for {
 			select {
+			case eventIn := <-res.eventsIn:
+				if eventIn.event == nil {
+					res.dispatchFlush(eventIn.reply)
+				} else {
+					res.dispatchEvent(eventIn.event, eventIn.reply)
+				}
 			case <-flushTicker.C:
-				res.flush()
+				res.dispatchFlush(nil)
 			case <-usersResetTicker.C:
 				res.summarizer.resetUsers()
+			case serverTimestamp := <-res.timeCh:
+				res.summarizer.setLastKnownPastTime(serverTimestamp)
 			case <-res.closer:
 				flushTicker.Stop()
 				usersResetTicker.Stop()
+				waitCh := make(chan error)
+				res.dispatchFlush(waitCh)
+				<-waitCh
 				return
 			}
 		}
@@ -124,50 +147,72 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 }
 
 func (ep *eventProcessor) close() {
-	ep.mu.Lock()
-	closed := ep.closed
-	ep.closed = true
-	ep.mu.Unlock()
-
-	if !closed {
+	ep.closeOnce.Do(func() {
 		close(ep.closer)
-		ep.flush()
-	}
+	})
 }
 
-func (ep *eventProcessor) flush() {
-	uri := ep.config.EventsUri + "/bulk"
-	ep.mu.Lock()
+func (ep *eventProcessor) flush() error {
+	input := eventInput{
+		event: nil,
+		reply: make(chan error),
+	}
+	ep.eventsIn <- input
+	// Wait for response
+	err := <-input.reply
+	return err
+}
 
+func (ep *eventProcessor) dispatchFlush(replyCh chan error) {
 	if len(ep.queue) == 0 || ep.closed {
-		ep.mu.Unlock()
+		if replyCh != nil {
+			replyCh <- nil
+		}
 		return
 	}
 
 	events := ep.queue
 	ep.queue = make([]interface{}, 0)
-	ep.mu.Unlock()
 
-	summaryData := ep.summarizer.flush()
-	if len(summaryData.Counters) > 0 {
-		se := summaryEventOutput{
-			summaryOutput: summaryData,
-			Kind:          SUMMARY_EVENT,
+	summaryState := ep.summarizer.snapshot()
+
+	go func() {
+		err := ep.flushInternal(events, summaryState)
+		if replyCh != nil {
+			replyCh <- err
 		}
-		// note that the queue size limit does not include the summary event, if any
-		events = append(events, se)
+	}()
+}
+
+func (ep *eventProcessor) flushInternal(events []interface{}, summaryState summaryEventsState) error {
+	outputEvents := make([]interface{}, 0, len(events)+1) // leave room for summary, if any
+	for _, e := range events {
+		oe := ep.makeOutputEvent(e)
+		if oe != nil {
+			outputEvents = append(outputEvents, oe)
+		}
 	}
 
-	payload, marshalErr := json.Marshal(events)
+	if len(summaryState.counters) > 0 {
+		se := summaryEventOutput{
+			summaryOutput: makeSummaryOutput(summaryState),
+			Kind:          SUMMARY_EVENT,
+		}
+		outputEvents = append(outputEvents, se)
+	}
+
+	payload, marshalErr := json.Marshal(outputEvents)
 
 	if marshalErr != nil {
 		ep.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
+		return marshalErr
 	}
 
-	req, reqErr := http.NewRequest("POST", uri, bytes.NewReader(payload))
+	req, reqErr := http.NewRequest("POST", ep.eventsUri, bytes.NewReader(payload))
 
 	if reqErr != nil {
 		ep.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
+		return reqErr
 	}
 
 	req.Header.Add("Authorization", ep.sdkKey)
@@ -185,41 +230,72 @@ func (ep *eventProcessor) flush() {
 
 	if respErr != nil {
 		ep.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
-		return
+		return respErr
 	}
-	err := checkStatusCode(resp.StatusCode, uri)
+	err := checkStatusCode(resp.StatusCode, ep.eventsUri)
 	if err != nil {
 		ep.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
 		if err != nil && err.Code == 401 {
 			ep.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
-			ep.mu.Lock()
 			ep.closed = true
-			ep.mu.Unlock()
+			return err
 		}
 	} else {
 		t, err := http.ParseTime(resp.Header.Get("Date"))
 		if err == nil {
-			ep.summarizer.setLastKnownPastTime(toUnixMillis(t))
+			ep.timeCh <- toUnixMillis(t)
 		}
+	}
+	return nil
+}
+
+// Posts an event asynchronously.
+func (ep *eventProcessor) sendEvent(evt Event) {
+	ep.eventsIn <- eventInput{
+		event: evt,
+		reply: nil,
 	}
 }
 
-func (ep *eventProcessor) sendEvent(evt Event) error {
+// Posts an event and waits until it has been processed, returning the error result if any.
+func (ep *eventProcessor) sendEventSync(evt Event) error {
+	if evt == nil {
+		return nil
+	}
+	input := eventInput{
+		event: evt,
+		reply: make(chan error),
+	}
+	ep.eventsIn <- input
+	err := <-input.reply
+	return err
+}
+
+func (ep *eventProcessor) dispatchEvent(evt Event, replyCh chan error) {
+	err := ep.sendEventInternal(evt)
+	if replyCh != nil {
+		replyCh <- err
+	}
+}
+
+func (ep *eventProcessor) sendEventInternal(evt Event) error {
 	if !ep.config.SendEvents {
 		return nil
 	}
 
-	creationDate := evt.GetBase().CreationDate
-	var userKey string
-	var newUser *User
-	if userKey, newUser = ep.dedupUser(evt); newUser != nil {
-		indexEvent := indexEventOutput{
-			Kind:         INDEX_EVENT,
-			CreationDate: creationDate,
-			User:         newUser,
-		}
-		if err := ep.queueEventOutput(indexEvent); err != nil {
-			return err
+	// For each user we haven't seen before, we add an index event - unless this is already
+	// an identify event for that user.
+	user := evt.GetBase().User
+	if !ep.summarizer.noticeUser(&user) {
+		if _, ok := evt.(IdentifyEvent); !ok {
+			indexEvent := indexEventOutput{
+				Kind:         INDEX_EVENT,
+				CreationDate: evt.GetBase().CreationDate,
+				User:         &user,
+			}
+			if err := ep.queueEvent(indexEvent); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -231,14 +307,19 @@ func (ep *eventProcessor) sendEvent(evt Event) error {
 		return nil
 	}
 
-	var eventOutput interface{}
+	// Queue the event as-is; we'll transform it into an output event when we're flushing
+	// (to avoid doing that work on our main goroutine).
+	return ep.queueEvent(evt)
+}
+
+func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		fe := featureRequestEventOutput{
 			Kind:         FEATURE_REQUEST_EVENT,
-			CreationDate: creationDate,
+			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.Key,
-			UserKey:      userKey,
+			UserKey:      evt.User.Key,
 			Value:        evt.Value,
 			Default:      evt.Default,
 			Version:      evt.Version,
@@ -248,61 +329,42 @@ func (ep *eventProcessor) sendEvent(evt Event) error {
 			debug := true
 			fe.Debug = &debug
 		}
-		eventOutput = fe
+		return fe
 	case CustomEvent:
-		ce := customEventOutput{
+		return customEventOutput{
 			Kind:         CUSTOM_EVENT,
-			CreationDate: creationDate,
+			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.Key,
-			UserKey:      userKey,
+			UserKey:      evt.User.Key,
 			Data:         evt.Data,
 		}
-		eventOutput = ce
 	case IdentifyEvent:
 		user := scrubUser(evt.User, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
-		ep.summarizer.noticeUser(user)
-		ie := identifyEventOutput{
+		return identifyEventOutput{
 			Kind:         IDENTIFY_EVENT,
-			CreationDate: creationDate,
+			CreationDate: evt.BaseEvent.CreationDate,
 			User:         user,
 		}
-		eventOutput = ie
+	case indexEventOutput:
+		evt.User = scrubUser(*evt.User, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
+		return evt
 	default:
-		return errors.New("unknown event type")
+		ep.config.Logger.Printf("Found unknown event type in output queue: %T", evt)
+		return nil
 	}
-
-	return ep.queueEventOutput(eventOutput)
 }
 
-func (ep *eventProcessor) queueEventOutput(eventOutput interface{}) error {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
-
+func (ep *eventProcessor) queueEvent(event interface{}) error {
 	if ep.closed {
 		return nil
 	}
 	if len(ep.queue) >= ep.config.Capacity {
-		return errors.New("Exceeded event queue capacity. Increase capacity to avoid dropping events.")
+		message := "Exceeded event queue capacity. Increase capacity to avoid dropping events."
+		ep.config.Logger.Printf("WARN: %s", message)
+		return errors.New(message)
 	}
-	ep.queue = append(ep.queue, eventOutput)
+	ep.queue = append(ep.queue, event)
 	return nil
-}
-
-func (ep *eventProcessor) dedupUser(evt Event) (string, *User) {
-	// identify events don't get deduplicated and always include the full user data
-	if _, ok := evt.(IdentifyEvent); ok {
-		return "", nil
-	}
-	user := scrubUser(evt.GetBase().User, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
-	var userKey string
-	if user.Key != nil {
-		userKey = *user.Key
-	}
-	if ep.summarizer.noticeUser(user) {
-		return userKey, nil
-	} else {
-		return userKey, user
-	}
 }
 
 func scrubUser(user User, allAttributesPrivate bool, globalPrivateAttributes []string) *User {

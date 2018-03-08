@@ -1,19 +1,19 @@
 package ldclient
 
-import (
-	"sync"
-)
-
 // Manages the state of summarizable information for the EventProcessor, including the
-// event counters and user deduplication.
+// event counters and user deduplication. Note that the methods for this type are
+// deliberately not thread-safe, because they should always be called from EventProcessor's
+// single event-processing goroutine.
 type eventSummarizer struct {
-	counters          map[counterKey]*counterValue
-	startDate         uint64
-	endDate           uint64
+	eventsState       summaryEventsState
 	lastKnownPastTime uint64
-	userKeysSeen      map[string]struct{}
-	userCapacity      int
-	flagsLock         *sync.Mutex
+	userKeys          lruCache
+}
+
+type summaryEventsState struct {
+	counters  map[counterKey]*counterValue
+	startDate uint64
+	endDate   uint64
 }
 
 type counterKey struct {
@@ -23,12 +23,17 @@ type counterKey struct {
 }
 
 type counterValue struct {
-	count     int
-	flagValue interface{}
+	count       int
+	flagValue   interface{}
+	flagDefault interface{}
 }
 
-type counterData struct {
-	Key     string      `json:"key"`
+type flagSummaryData struct {
+	Default  interface{}       `json:"default"`
+	Counters []flagCounterData `json:"counters"`
+}
+
+type flagCounterData struct {
 	Value   interface{} `json:"value"`
 	Version *int        `json:"version,omitempty"`
 	Count   int         `json:"count"`
@@ -36,41 +41,35 @@ type counterData struct {
 }
 
 type summaryOutput struct {
-	StartDate uint64        `json:"startDate"`
-	EndDate   uint64        `json:"endDate"`
-	Counters  []counterData `json:"counters"`
+	StartDate uint64                     `json:"startDate"`
+	EndDate   uint64                     `json:"endDate"`
+	Features  map[string]flagSummaryData `json:"features"`
 }
 
 func NewEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
-		counters:     make(map[counterKey]*counterValue),
-		userKeysSeen: make(map[string]struct{}),
-		userCapacity: config.UserKeysCapacity,
-		flagsLock:    &sync.Mutex{},
+		eventsState: newSummaryEventsState(),
+		userKeys:    newLruCache(config.UserKeysCapacity),
+	}
+}
+
+func newSummaryEventsState() summaryEventsState {
+	return summaryEventsState{
+		counters: make(map[counterKey]*counterValue),
 	}
 }
 
 // Add to the set of users we've noticed, and return true if the user was already known to us.
 func (s *eventSummarizer) noticeUser(user *User) bool {
 	if user == nil || user.Key == nil {
-		return false
-	}
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
-	if _, ok := s.userKeysSeen[*user.Key]; ok {
 		return true
 	}
-	if len(s.userKeysSeen) < s.userCapacity {
-		s.userKeysSeen[*user.Key] = struct{}{}
-	}
-	return false
+	return s.userKeys.add(*user.Key)
 }
 
 // Clears the set of users we've noticed.
 func (s *eventSummarizer) resetUsers() {
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
-	s.userKeysSeen = make(map[string]struct{})
+	s.userKeys.clear()
 }
 
 // Check whether this is a kind of event that we should summarize; if so, add it to our
@@ -84,9 +83,6 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 	if fe.TrackEvents {
 		return false
 	}
-
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
 
 	if fe.DebugEventsUntilDate != nil {
 		// The "last known past time" comes from the last HTTP response we got from the server.
@@ -106,21 +102,22 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 		key.version = *fe.Version
 	}
 
-	if value, ok := s.counters[key]; ok {
+	if value, ok := s.eventsState.counters[key]; ok {
 		value.count++
 	} else {
-		s.counters[key] = &counterValue{
-			count:     1,
-			flagValue: fe.Value,
+		s.eventsState.counters[key] = &counterValue{
+			count:       1,
+			flagValue:   fe.Value,
+			flagDefault: fe.Default,
 		}
 	}
 
 	creationDate := fe.CreationDate
-	if s.startDate == 0 || creationDate < s.startDate {
-		s.startDate = creationDate
+	if s.eventsState.startDate == 0 || creationDate < s.eventsState.startDate {
+		s.eventsState.startDate = creationDate
 	}
-	if creationDate > s.endDate {
-		s.endDate = creationDate
+	if creationDate > s.eventsState.endDate {
+		s.eventsState.endDate = creationDate
 	}
 
 	return true
@@ -129,29 +126,31 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 // Marks the given timestamp (received from the server) as being in the past, in case the
 // client-side time is unreliable.
 func (s *eventSummarizer) setLastKnownPastTime(t uint64) {
-	s.flagsLock.Lock()
-	defer s.flagsLock.Unlock()
 	if s.lastKnownPastTime == 0 || s.lastKnownPastTime < t {
 		s.lastKnownPastTime = t
 	}
 }
 
-// Transforms all current counters into the format used for event sending, then clears them.
-func (s *eventSummarizer) flush() summaryOutput {
-	s.flagsLock.Lock()
-	counters := s.counters
-	startDate := s.startDate
-	endDate := s.endDate
-	s.counters = make(map[counterKey]*counterValue)
-	s.startDate = 0
-	s.endDate = 0
-	s.flagsLock.Unlock()
+// Returns a snapshot of the current summarized event data, and resets this state.
+func (s *eventSummarizer) snapshot() summaryEventsState {
+	state := s.eventsState
+	s.eventsState = newSummaryEventsState()
+	return state
+}
 
-	countersOut := make([]counterData, len(counters))
-	i := 0
-	for key, value := range counters {
-		data := counterData{
-			Key:   key.key,
+// Transforms the summary data into the format used for event sending.
+func makeSummaryOutput(snapshot summaryEventsState) summaryOutput {
+	features := make(map[string]flagSummaryData)
+	for key, value := range snapshot.counters {
+		var flagData flagSummaryData
+		var known bool
+		if flagData, known = features[key.key]; !known {
+			flagData = flagSummaryData{
+				Default:  value.flagDefault,
+				Counters: make([]flagCounterData, 0, 2),
+			}
+		}
+		data := flagCounterData{
 			Value: value.flagValue,
 			Count: value.count,
 		}
@@ -162,13 +161,13 @@ func (s *eventSummarizer) flush() summaryOutput {
 			version := key.version
 			data.Version = &version
 		}
-		countersOut[i] = data
-		i++
+		flagData.Counters = append(flagData.Counters, data)
+		features[key.key] = flagData
 	}
 
 	return summaryOutput{
-		StartDate: startDate,
-		EndDate:   endDate,
-		Counters:  countersOut,
+		StartDate: snapshot.startDate,
+		EndDate:   snapshot.endDate,
+		Features:  features,
 	}
 }
