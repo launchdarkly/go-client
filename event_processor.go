@@ -174,20 +174,20 @@ func (ep *eventProcessor) dispatchFlush(replyCh chan error) {
 	events := ep.queue
 	ep.queue = make([]interface{}, 0)
 
-	summaryData := ep.summarizer.flush()
+	summaryState := ep.summarizer.snapshot()
 
 	go func() {
-		err := ep.flushInternal(events, summaryData)
+		err := ep.flushInternal(events, summaryState)
 		if replyCh != nil {
 			replyCh <- err
 		}
 	}()
 }
 
-func (ep *eventProcessor) flushInternal(events []interface{}, summaryData summaryOutput) error {
-	if len(summaryData.Counters) > 0 {
+func (ep *eventProcessor) flushInternal(events []interface{}, summaryState summaryEventsState) error {
+	if len(summaryState.counters) > 0 {
 		se := summaryEventOutput{
-			summaryOutput: summaryData,
+			summaryOutput: ep.summarizer.output(summaryState),
 			Kind:          SUMMARY_EVENT,
 		}
 		// note that the queue size limit does not include the summary event, if any
@@ -352,15 +352,15 @@ func (ep *eventProcessor) dedupUser(evt Event) (string, *User) {
 	if _, ok := evt.(IdentifyEvent); ok {
 		return "", nil
 	}
-	user := scrubUser(evt.GetBase().User, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
+	user := evt.GetBase().User
 	var userKey string
 	if user.Key != nil {
 		userKey = *user.Key
 	}
-	if ep.summarizer.noticeUser(user) {
+	if ep.summarizer.noticeUser(&user) {
 		return userKey, nil
 	} else {
-		return userKey, user
+		return userKey, scrubUser(user, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
 	}
 }
 
