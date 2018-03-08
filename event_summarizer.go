@@ -9,8 +9,7 @@ import (
 type eventSummarizer struct {
 	eventsState       summaryEventsState
 	lastKnownPastTime uint64
-	userKeysSeen      map[string]struct{}
-	userCapacity      int
+	userKeys          lruCache
 	flagsLock         *sync.Mutex
 }
 
@@ -52,10 +51,9 @@ type summaryOutput struct {
 
 func NewEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
-		eventsState:  newSummaryEventsState(),
-		userKeysSeen: make(map[string]struct{}),
-		userCapacity: config.UserKeysCapacity,
-		flagsLock:    &sync.Mutex{},
+		eventsState: newSummaryEventsState(),
+		userKeys:    newLruCache(config.UserKeysCapacity),
+		flagsLock:   &sync.Mutex{},
 	}
 }
 
@@ -72,20 +70,14 @@ func (s *eventSummarizer) noticeUser(user *User) bool {
 	}
 	s.flagsLock.Lock()
 	defer s.flagsLock.Unlock()
-	if _, ok := s.userKeysSeen[*user.Key]; ok {
-		return true
-	}
-	if len(s.userKeysSeen) < s.userCapacity {
-		s.userKeysSeen[*user.Key] = struct{}{}
-	}
-	return false
+	return s.userKeys.add(*user.Key)
 }
 
 // Clears the set of users we've noticed.
 func (s *eventSummarizer) resetUsers() {
 	s.flagsLock.Lock()
 	defer s.flagsLock.Unlock()
-	s.userKeysSeen = make(map[string]struct{})
+	s.userKeys.clear()
 }
 
 // Check whether this is a kind of event that we should summarize; if so, add it to our
