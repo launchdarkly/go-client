@@ -1,7 +1,6 @@
 package ldclient
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -154,8 +153,7 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 			},
 		},
 	}
-	assert.Truef(t, reflect.DeepEqual(expectedFeatures, data.Features),
-		"Expected features to be:\n%+v\n  but got:\n%+v", expectedFeatures, data.Features)
+	assert.Equal(t, expectedFeatures, data.Features)
 }
 
 func findCounter(counters []flagCounterData, value interface{}) *flagCounterData {
