@@ -18,6 +18,7 @@ type eventProcessor struct {
 	eventsUri  string
 	client     *http.Client
 	eventsIn   chan eventInput
+	timeCh     chan uint64
 	closer     chan struct{}
 	closeOnce  sync.Once
 	closed     bool
@@ -97,6 +98,7 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 		eventsUri:  config.EventsUri + "/bulk",
 		client:     client,
 		eventsIn:   make(chan eventInput, 100),
+		timeCh:     make(chan uint64),
 		closer:     make(chan struct{}),
 		summarizer: NewEventSummarizer(config),
 	}
@@ -128,6 +130,8 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 				res.dispatchFlush(nil)
 			case <-usersResetTicker.C:
 				res.summarizer.resetUsers()
+			case serverTimestamp := <-res.timeCh:
+				res.summarizer.setLastKnownPastTime(serverTimestamp)
 			case <-res.closer:
 				flushTicker.Stop()
 				usersResetTicker.Stop()
@@ -239,7 +243,7 @@ func (ep *eventProcessor) flushInternal(events []interface{}, summaryState summa
 	} else {
 		t, err := http.ParseTime(resp.Header.Get("Date"))
 		if err == nil {
-			ep.summarizer.setLastKnownPastTime(toUnixMillis(t))
+			ep.timeCh <- toUnixMillis(t)
 		}
 	}
 	return nil
