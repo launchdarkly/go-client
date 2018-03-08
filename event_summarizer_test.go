@@ -1,6 +1,7 @@
 package ldclient
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -117,6 +118,7 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 	data := es.output(es.snapshot())
 
 	unknownTrue := true
+	sort.Sort(CountersByValue(data.Features[flag1.Key].Counters))
 	expectedFeatures := map[string]flagSummaryData{
 		flag1.Key: flagSummaryData{
 			Default: "default1",
@@ -155,3 +157,9 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 	}
 	assert.Equal(t, expectedFeatures, data.Features)
 }
+
+type CountersByValue []flagCounterData
+
+func (a CountersByValue) Len() int           { return len(a) }
+func (a CountersByValue) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a CountersByValue) Less(i, j int) bool { return a[i].Value.(string) < a[j].Value.(string) }
