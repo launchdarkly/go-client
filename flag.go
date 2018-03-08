@@ -14,20 +14,20 @@ const (
 )
 
 type FeatureFlag struct {
-	Key                       string             `json:"key" bson:"key"`
-	Version                   int                `json:"version" bson:"version"`
-	On                        bool               `json:"on" bson:"on"`
-	Prerequisites             []Prerequisite     `json:"prerequisites" bson:"prerequisites"`
-	Salt                      string             `json:"salt" bson:"salt"`
-	Sel                       string             `json:"sel" bson:"sel"`
-	Targets                   []Target           `json:"targets" bson:"targets"`
-	Rules                     []Rule             `json:"rules" bson:"rules"`
-	Fallthrough               VariationOrRollout `json:"fallthrough" bson:"fallthrough"`
-	OffVariation              *int               `json:"offVariation" bson:"offVariation"`
-	Variations                []interface{}      `json:"variations" bson:"variations"`
-	TrackEvents               bool               `json:"trackEvents" bson:"trackEvents"`
-	TrackEventsExpirationDate *uint64            `json:"trackEventsExpirationDate" bson:"trackEventsExpirationDate"`
-	Deleted                   bool               `json:"deleted" bson:"deleted"`
+	Key                  string             `json:"key" bson:"key"`
+	Version              int                `json:"version" bson:"version"`
+	On                   bool               `json:"on" bson:"on"`
+	Prerequisites        []Prerequisite     `json:"prerequisites" bson:"prerequisites"`
+	Salt                 string             `json:"salt" bson:"salt"`
+	Sel                  string             `json:"sel" bson:"sel"`
+	Targets              []Target           `json:"targets" bson:"targets"`
+	Rules                []Rule             `json:"rules" bson:"rules"`
+	Fallthrough          VariationOrRollout `json:"fallthrough" bson:"fallthrough"`
+	OffVariation         *int               `json:"offVariation" bson:"offVariation"`
+	Variations           []interface{}      `json:"variations" bson:"variations"`
+	TrackEvents          bool               `json:"trackEvents" bson:"trackEvents"`
+	DebugEventsUntilDate *uint64            `json:"debugEventsUntilDate" bson:"debugEventsUntilDate"`
+	Deleted              bool               `json:"deleted" bson:"deleted"`
 }
 
 func (f *FeatureFlag) GetKey() string {
@@ -43,8 +43,8 @@ func (f *FeatureFlag) IsDeleted() bool {
 }
 
 func (f *FeatureFlag) Clone() VersionedData {
-	f1 := *f;
-	return &f1;
+	f1 := *f
+	return &f1
 }
 
 type FeatureFlagVersionedDataKind struct{}
@@ -147,6 +147,7 @@ func bucketableStringValue(uValue interface{}) (string, bool) {
 
 type EvalResult struct {
 	Value                     interface{}
+	Variation                 *int
 	Explanation               *Explanation
 	PrerequisiteRequestEvents []FeatureRequestEvent //to be sent to LD
 }
@@ -156,16 +157,17 @@ func (f FeatureFlag) EvaluateExplain(user User, store FeatureStore) (*EvalResult
 		return nil, nil
 	}
 	events := make([]FeatureRequestEvent, 0)
-	value, explanation, err := f.evaluateExplain(user, store, &events)
+	value, index, explanation, err := f.evaluateExplain(user, store, &events)
 
 	return &EvalResult{
 		Value:                     value,
+		Variation:                 index,
 		Explanation:               explanation,
 		PrerequisiteRequestEvents: events,
 	}, err
 }
 
-func (f FeatureFlag) evaluateExplain(user User, store FeatureStore, events *[]FeatureRequestEvent) (interface{}, *Explanation, error) {
+func (f FeatureFlag) evaluateExplain(user User, store FeatureStore, events *[]FeatureRequestEvent) (interface{}, *int, *Explanation, error) {
 	var failedPrereq *Prerequisite
 	for _, prereq := range f.Prerequisites {
 		data, err := store.Get(Features, prereq.Key)
@@ -175,12 +177,12 @@ func (f FeatureFlag) evaluateExplain(user User, store FeatureStore, events *[]Fe
 		}
 		prereqFeatureFlag, _ := data.(*FeatureFlag)
 		if prereqFeatureFlag.On {
-			prereqValue, _, err := prereqFeatureFlag.evaluateExplain(user, store, events)
+			prereqValue, prereqIndex, _, err := prereqFeatureFlag.evaluateExplain(user, store, events)
 			if err != nil {
 				failedPrereq = &prereq
 			}
 
-			*events = append(*events, NewFeatureRequestEvent(prereq.Key, user, prereqValue, nil, &prereqFeatureFlag.Version, &f.Key))
+			*events = append(*events, NewFeatureRequestEvent(prereq.Key, prereqFeatureFlag, user, prereqIndex, prereqValue, nil, &f.Key))
 			variation, verr := prereqFeatureFlag.getVariation(&prereq.Variation)
 			if prereqValue == nil || verr != nil || prereqValue != variation {
 				failedPrereq = &prereq
@@ -196,16 +198,16 @@ func (f FeatureFlag) evaluateExplain(user User, store FeatureStore, events *[]Fe
 			Prerequisite: failedPrereq,
 		} //return the last prereq to fail
 
-		return nil, &explanation, nil
+		return nil, nil, &explanation, nil
 	}
 
 	index, explanation := f.evaluateExplainIndex(store, user)
 	variation, verr := f.getVariation(index)
 
 	if verr != nil {
-		return nil, explanation, verr
+		return nil, index, explanation, verr
 	}
-	return variation, explanation, nil
+	return variation, index, explanation, nil
 }
 
 func (f FeatureFlag) getVariation(index *int) (interface{}, error) {
