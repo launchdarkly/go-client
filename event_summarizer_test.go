@@ -42,36 +42,24 @@ func TestOldestUserForgottenIfCapacityExceeded(t *testing.T) {
 	assert.False(t, es.noticeUser(&user1))
 }
 
-func TestSummarizeEventReturnsFalseForIdentifyEvent(t *testing.T) {
+func TestSummarizeEventDoesNothingForIdentifyEvent(t *testing.T) {
 	es := NewEventSummarizer(esDefaultConfig)
+	snapshot := es.snapshot()
+
 	event := NewIdentifyEvent(user)
-	assert.False(t, es.summarizeEvent(event))
+	es.summarizeEvent(event)
+
+	assert.Equal(t, snapshot, es.snapshot())
 }
 
-func TestSummarizeEventReturnsFalseForCustomEvent(t *testing.T) {
+func TestSummarizeEventDoesNothingForCustomEvent(t *testing.T) {
 	es := NewEventSummarizer(esDefaultConfig)
+	snapshot := es.snapshot()
+
 	event := NewCustomEvent("whatever", user, nil)
-	assert.False(t, es.summarizeEvent(event))
-}
+	es.summarizeEvent(event)
 
-func TestSummarizeEventReturnsTrueForFeatureEventWithTrackEventsFalse(t *testing.T) {
-	es := NewEventSummarizer(esDefaultConfig)
-	flag := FeatureFlag{
-		Key:         "key",
-		TrackEvents: false,
-	}
-	event := NewFeatureRequestEvent(flag.Key, &flag, user, nil, nil, nil, nil)
-	assert.True(t, es.summarizeEvent(event))
-}
-
-func TestSummarizeEventReturnsFalseForFeatureEventWithTrackEventsTrue(t *testing.T) {
-	es := NewEventSummarizer(esDefaultConfig)
-	flag := FeatureFlag{
-		Key:         "key",
-		TrackEvents: true,
-	}
-	event := NewFeatureRequestEvent(flag.Key, &flag, user, nil, nil, nil, nil)
-	assert.False(t, es.summarizeEvent(event))
+	assert.Equal(t, snapshot, es.snapshot())
 }
 
 func TestSummarizeEventSetsStartAndEndDates(t *testing.T) {
