@@ -33,8 +33,8 @@ type counterValue struct {
 }
 
 type flagSummaryData struct {
-	Default  interface{} `json:"default"`
-	Counters []flagCounterData
+	Default  interface{}       `json:"default"`
+	Counters []flagCounterData `json:"counters"`
 }
 
 type flagCounterData struct {
