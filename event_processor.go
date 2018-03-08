@@ -315,21 +315,22 @@ func (ep *eventProcessor) sendEventInternal(evt Event) error {
 }
 
 func (ep *eventProcessor) shouldTrackFullEvent(evt Event) bool {
-	if fe, ok := evt.(FeatureRequestEvent); ok {
-		if fe.TrackEvents {
+	switch evt := evt.(type) {
+	case FeatureRequestEvent:
+		if evt.TrackEvents {
 			return true
 		}
-		if fe.DebugEventsUntilDate != nil {
+		if evt.DebugEventsUntilDate != nil {
 			// The "last known past time" comes from the last HTTP response we got from the server.
 			// In case the client's time is set wrong, at least we know that any expiration date
 			// earlier than that point is definitely in the past.
-			if (ep.lastKnownPastTime != 0 && *fe.DebugEventsUntilDate > ep.lastKnownPastTime) ||
-				*fe.DebugEventsUntilDate > now() {
+			if (ep.lastKnownPastTime != 0 && *evt.DebugEventsUntilDate > ep.lastKnownPastTime) ||
+				*evt.DebugEventsUntilDate > now() {
 				return true
 			}
 		}
 		return false
-	} else {
+	default:
 		// Custom and identify events are always included in full
 		return true
 	}
