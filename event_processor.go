@@ -363,23 +363,6 @@ func (ep *eventProcessor) queueEvent(event interface{}) error {
 	return nil
 }
 
-func (ep *eventProcessor) dedupUser(evt Event) (string, *User) {
-	// identify events don't get deduplicated and always include the full user data
-	if _, ok := evt.(IdentifyEvent); ok {
-		return "", nil
-	}
-	user := evt.GetBase().User
-	var userKey string
-	if user.Key != nil {
-		userKey = *user.Key
-	}
-	if ep.summarizer.noticeUser(&user) {
-		return userKey, nil
-	} else {
-		return userKey, scrubUser(user, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
-	}
-}
-
 func scrubUser(user User, allAttributesPrivate bool, globalPrivateAttributes []string) *User {
 	user.PrivateAttributes = nil
 
