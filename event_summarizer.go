@@ -64,7 +64,7 @@ func newSummaryEventsState() summaryEventsState {
 // Add to the set of users we've noticed, and return true if the user was already known to us.
 func (s *eventSummarizer) noticeUser(user *User) bool {
 	if user == nil || user.Key == nil {
-		return false
+		return true
 	}
 	if _, ok := s.userKeysSeen[*user.Key]; ok {
 		return true
