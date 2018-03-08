@@ -7,13 +7,17 @@ import (
 // Manages the state of summarizable information for the EventProcessor, including the
 // event counters and user deduplication.
 type eventSummarizer struct {
-	counters          map[counterKey]*counterValue
-	startDate         uint64
-	endDate           uint64
+	eventsState       summaryEventsState
 	lastKnownPastTime uint64
 	userKeysSeen      map[string]struct{}
 	userCapacity      int
 	flagsLock         *sync.Mutex
+}
+
+type summaryEventsState struct {
+	counters  map[counterKey]*counterValue
+	startDate uint64
+	endDate   uint64
 }
 
 type counterKey struct {
@@ -23,12 +27,17 @@ type counterKey struct {
 }
 
 type counterValue struct {
-	count     int
-	flagValue interface{}
+	count       int
+	flagValue   interface{}
+	flagDefault interface{}
 }
 
-type counterData struct {
-	Key     string      `json:"key"`
+type flagSummaryData struct {
+	Default  interface{}       `json:"default"`
+	Counters []flagCounterData `json:"counters"`
+}
+
+type flagCounterData struct {
 	Value   interface{} `json:"value"`
 	Version *int        `json:"version,omitempty"`
 	Count   int         `json:"count"`
@@ -36,17 +45,23 @@ type counterData struct {
 }
 
 type summaryOutput struct {
-	StartDate uint64        `json:"startDate"`
-	EndDate   uint64        `json:"endDate"`
-	Counters  []counterData `json:"counters"`
+	StartDate uint64                     `json:"startDate"`
+	EndDate   uint64                     `json:"endDate"`
+	Features  map[string]flagSummaryData `json:"features"`
 }
 
 func NewEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
-		counters:     make(map[counterKey]*counterValue),
+		eventsState:  newSummaryEventsState(),
 		userKeysSeen: make(map[string]struct{}),
 		userCapacity: config.UserKeysCapacity,
 		flagsLock:    &sync.Mutex{},
+	}
+}
+
+func newSummaryEventsState() summaryEventsState {
+	return summaryEventsState{
+		counters: make(map[counterKey]*counterValue),
 	}
 }
 
@@ -106,21 +121,22 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 		key.version = *fe.Version
 	}
 
-	if value, ok := s.counters[key]; ok {
+	if value, ok := s.eventsState.counters[key]; ok {
 		value.count++
 	} else {
-		s.counters[key] = &counterValue{
-			count:     1,
-			flagValue: fe.Value,
+		s.eventsState.counters[key] = &counterValue{
+			count:       1,
+			flagValue:   fe.Value,
+			flagDefault: fe.Default,
 		}
 	}
 
 	creationDate := fe.CreationDate
-	if s.startDate == 0 || creationDate < s.startDate {
-		s.startDate = creationDate
+	if s.eventsState.startDate == 0 || creationDate < s.eventsState.startDate {
+		s.eventsState.startDate = creationDate
 	}
-	if creationDate > s.endDate {
-		s.endDate = creationDate
+	if creationDate > s.eventsState.endDate {
+		s.eventsState.endDate = creationDate
 	}
 
 	return true
@@ -136,22 +152,28 @@ func (s *eventSummarizer) setLastKnownPastTime(t uint64) {
 	}
 }
 
-// Transforms all current counters into the format used for event sending, then clears them.
-func (s *eventSummarizer) flush() summaryOutput {
+// Returns a snapshot of the current summarized event data, and resets this state.
+func (s *eventSummarizer) snapshot() summaryEventsState {
 	s.flagsLock.Lock()
-	counters := s.counters
-	startDate := s.startDate
-	endDate := s.endDate
-	s.counters = make(map[counterKey]*counterValue)
-	s.startDate = 0
-	s.endDate = 0
-	s.flagsLock.Unlock()
+	defer s.flagsLock.Unlock()
+	state := s.eventsState
+	s.eventsState = newSummaryEventsState()
+	return state
+}
 
-	countersOut := make([]counterData, len(counters))
-	i := 0
-	for key, value := range counters {
-		data := counterData{
-			Key:   key.key,
+// Transforms the summary data into the format used for event sending.
+func (s *eventSummarizer) output(snapshot summaryEventsState) summaryOutput {
+	features := make(map[string]flagSummaryData)
+	for key, value := range snapshot.counters {
+		var flagData flagSummaryData
+		var known bool
+		if flagData, known = features[key.key]; !known {
+			flagData = flagSummaryData{
+				Default:  value.flagDefault,
+				Counters: make([]flagCounterData, 0, 2),
+			}
+		}
+		data := flagCounterData{
 			Value: value.flagValue,
 			Count: value.count,
 		}
@@ -162,13 +184,13 @@ func (s *eventSummarizer) flush() summaryOutput {
 			version := key.version
 			data.Version = &version
 		}
-		countersOut[i] = data
-		i++
+		flagData.Counters = append(flagData.Counters, data)
+		features[key.key] = flagData
 	}
 
 	return summaryOutput{
-		StartDate: startDate,
-		EndDate:   endDate,
-		Counters:  countersOut,
+		StartDate: snapshot.startDate,
+		EndDate:   snapshot.endDate,
+		Features:  features,
 	}
 }
