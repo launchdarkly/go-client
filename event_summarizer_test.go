@@ -1,6 +1,7 @@
 package ldclient
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -116,34 +117,45 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 	es.summarizeEvent(event5)
 	data := es.output(es.snapshot())
 
-	assert.Equal(t, 3, len(data.Features))
-
-	df1 := data.Features[flag1.Key]
-	assert.NotNil(t, df1)
-	assert.Equal(t, "default1", df1.Default)
-	assert.Equal(t, 2, len(df1.Counters))
-	df1c1 := findCounter(df1.Counters, "value1")
-	assert.NotNil(t, df1c1)
-	assert.Equal(t, flag1.Version, *df1c1.Version)
-	assert.Equal(t, 2, df1c1.Count)
-	df1c2 := findCounter(df1.Counters, "value2")
-	assert.NotNil(t, df1c2)
-	assert.Equal(t, flag1.Version, *df1c2.Version)
-	assert.Equal(t, 1, df1c2.Count)
-
-	df2 := data.Features[flag2.Key]
-	assert.NotNil(t, df2)
-	assert.Equal(t, "default2", df2.Default)
-	assert.Equal(t, 1, len(df2.Counters))
-	assert.Equal(t, "value99", df2.Counters[0].Value)
-	assert.Equal(t, flag2.Version, *df2.Counters[0].Version)
-	assert.Nil(t, df2.Counters[0].Unknown)
-
-	df3 := data.Features[unknownFlagKey]
-	assert.NotNil(t, df3)
-	assert.Equal(t, "default3", df3.Default)
-	assert.Equal(t, 1, len(df3.Counters))
-	assert.Equal(t, true, *df3.Counters[0].Unknown)
+	unknownTrue := true
+	expectedFeatures := map[string]flagSummaryData{
+		flag1.Key: flagSummaryData{
+			Default: "default1",
+			Counters: []flagCounterData{
+				flagCounterData{
+					Version: &flag1.Version,
+					Value:   "value1",
+					Count:   2,
+				},
+				flagCounterData{
+					Version: &flag1.Version,
+					Value:   "value2",
+					Count:   1,
+				},
+			},
+		},
+		flag2.Key: flagSummaryData{
+			Default: "default2",
+			Counters: []flagCounterData{
+				flagCounterData{
+					Version: &flag2.Version,
+					Value:   "value99",
+					Count:   1,
+				},
+			},
+		},
+		unknownFlagKey: flagSummaryData{
+			Default: "default3",
+			Counters: []flagCounterData{
+				flagCounterData{
+					Count:   1,
+					Unknown: &unknownTrue,
+				},
+			},
+		},
+	}
+	assert.Truef(t, reflect.DeepEqual(expectedFeatures, data.Features),
+		"Expected features to be:\n%+v\n  but got:\n%+v", expectedFeatures, data.Features)
 }
 
 func findCounter(counters []flagCounterData, value interface{}) *flagCounterData {

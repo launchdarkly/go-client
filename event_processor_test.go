@@ -54,10 +54,13 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
 
-	ieo := jsonMap(output[0])
-	assert.Equal(t, "identify", ieo["kind"])
-	assert.Equal(t, float64(ie.CreationDate), ieo["creationDate"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	ieo := output[0]
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "identify",
+		"creationDate": float64(ie.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 }
 
 func TestIndividualFeatureEventIsQueuedWithIndexEvent(t *testing.T) {
@@ -80,17 +83,24 @@ func TestIndividualFeatureEventIsQueuedWithIndexEvent(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	feo := output[1]
-	assert.Equal(t, "feature", feo["kind"])
-	assert.Equal(t, float64(fe.CreationDate), feo["creationDate"])
-	assert.Equal(t, flag.Key, feo["key"])
-	assert.Equal(t, float64(flag.Version), feo["version"])
-	assert.Equal(t, value, feo["value"])
-	assert.Equal(t, *user.Key, feo["userKey"])
-	assert.Nil(t, feo["debug"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe.CreationDate),
+		"key":          flag.Key,
+		"version":      float64(flag.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, feo)
 }
 
 func TestDebugFlagIsSetIfFlagIsTemporarilyInDebugMode(t *testing.T) {
@@ -115,17 +125,25 @@ func TestDebugFlagIsSetIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	feo := output[1]
-	assert.Equal(t, "feature", feo["kind"])
-	assert.Equal(t, float64(fe.CreationDate), feo["creationDate"])
-	assert.Equal(t, flag.Key, feo["key"])
-	assert.Equal(t, float64(flag.Version), feo["version"])
-	assert.Equal(t, value, feo["value"])
-	assert.Equal(t, *user.Key, feo["userKey"])
-	assert.Equal(t, true, feo["debug"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe.CreationDate),
+		"key":          flag.Key,
+		"version":      float64(flag.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+		"debug":        true,
+	})
+	assert.Equal(t, expected, feo)
 }
 
 func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
@@ -155,24 +173,36 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 	assert.Equal(t, 3, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe1.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	feo1 := output[1]
-	assert.Equal(t, "feature", feo1["kind"])
-	assert.Equal(t, float64(fe1.CreationDate), feo1["creationDate"])
-	assert.Equal(t, flag1.Key, feo1["key"])
-	assert.Equal(t, float64(flag1.Version), feo1["version"])
-	assert.Equal(t, value, feo1["value"])
-	assert.Equal(t, *user.Key, feo1["userKey"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe1.CreationDate),
+		"key":          flag1.Key,
+		"version":      float64(flag1.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, feo1)
 
 	feo2 := output[2]
-	assert.Equal(t, "feature", feo2["kind"])
-	assert.Equal(t, float64(fe2.CreationDate), feo2["creationDate"])
-	assert.Equal(t, flag2.Key, feo2["key"])
-	assert.Equal(t, float64(flag2.Version), feo2["version"])
-	assert.Equal(t, value, feo2["value"])
-	assert.Equal(t, *user.Key, feo2["userKey"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "feature",
+		"creationDate": float64(fe2.CreationDate),
+		"key":          flag2.Key,
+		"version":      float64(flag2.Version),
+		"value":        value,
+		"default":      nil,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, feo2)
 }
 
 func TestNonTrackedEventsAreSummarized(t *testing.T) {
@@ -202,15 +232,42 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := output[0]
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(fe1.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	seo := output[1]
-	assert.Equal(t, "summary", seo["kind"])
-	assert.Equal(t, float64(fe1.CreationDate), seo["startDate"])
-	assert.Equal(t, float64(fe2.CreationDate), seo["endDate"])
-	seFlags := seo["features"].(map[string]interface{})
-	assert.Equal(t, 2, len(seFlags))
+	expected = jsonMap(map[string]interface{}{
+		"kind":      "summary",
+		"startDate": float64(fe1.CreationDate),
+		"endDate":   float64(fe2.CreationDate),
+		"features": map[string]interface{}{
+			flag1.Key: map[string]interface{}{
+				"default": nil,
+				"counters": []interface{}{
+					map[string]interface{}{
+						"version": float64(flag1.Version),
+						"value":   value,
+						"count":   1,
+					},
+				},
+			},
+			flag2.Key: map[string]interface{}{
+				"default": nil,
+				"counters": []interface{}{
+					map[string]interface{}{
+						"version": float64(flag2.Version),
+						"value":   value,
+						"count":   1,
+					},
+				},
+			},
+		},
+	})
+	assert.Equal(t, expected, seo)
 }
 
 func TestCustomEventIsQueuedWithUser(t *testing.T) {
@@ -229,15 +286,22 @@ func TestCustomEventIsQueuedWithUser(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := jsonMap(output[0])
-	assert.Equal(t, "index", ieo["kind"])
-	assert.Equal(t, jsonMap(user), ieo["user"])
+	expected := jsonMap(map[string]interface{}{
+		"kind":         "index",
+		"creationDate": float64(ce.CreationDate),
+		"user":         user,
+	})
+	assert.Equal(t, expected, ieo)
 
 	ceo := jsonMap(output[1])
-	assert.Equal(t, "custom", ceo["kind"])
-	assert.Equal(t, float64(ce.CreationDate), ceo["creationDate"])
-	assert.Equal(t, ce.Key, ceo["key"])
-	assert.Equal(t, data, ceo["data"])
-	assert.Equal(t, *user.Key, ceo["userKey"])
+	expected = jsonMap(map[string]interface{}{
+		"kind":         "custom",
+		"creationDate": float64(ce.CreationDate),
+		"key":          ce.Key,
+		"data":         data,
+		"userKey":      *user.Key,
+	})
+	assert.Equal(t, expected, ceo)
 }
 
 func TestSdkKeyIsSent(t *testing.T) {
