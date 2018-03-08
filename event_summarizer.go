@@ -10,7 +10,6 @@ type eventSummarizer struct {
 	eventsState       summaryEventsState
 	lastKnownPastTime uint64
 	userKeys          lruCache
-	userCapacity      int
 	flagsLock         *sync.Mutex
 }
 
