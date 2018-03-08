@@ -26,7 +26,7 @@ func TestNoticeUserReturnsTrueForPreviouslySeenUser(t *testing.T) {
 	assert.True(t, result)
 }
 
-func TestUsersNotDeduplicatedIfCapacityExceeded(t *testing.T) {
+func TestOldestUserForgottenIfCapacityExceeded(t *testing.T) {
 	config := Config{
 		UserKeysCapacity: 2,
 	}
@@ -37,8 +37,9 @@ func TestUsersNotDeduplicatedIfCapacityExceeded(t *testing.T) {
 	es.noticeUser(&user1)
 	es.noticeUser(&user2)
 	es.noticeUser(&user3)
-	result := es.noticeUser(&user3)
-	assert.False(t, result)
+	assert.True(t, es.noticeUser(&user3))
+	assert.True(t, es.noticeUser(&user2))
+	assert.False(t, es.noticeUser(&user1))
 }
 
 func TestSummarizeEventReturnsFalseForIdentifyEvent(t *testing.T) {
