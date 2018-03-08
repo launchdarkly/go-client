@@ -5,9 +5,8 @@ package ldclient
 // deliberately not thread-safe, because they should always be called from EventProcessor's
 // single event-processing goroutine.
 type eventSummarizer struct {
-	eventsState       summaryEventsState
-	lastKnownPastTime uint64
-	userKeys          lruCache
+	eventsState summaryEventsState
+	userKeys    lruCache
 }
 
 type summaryEventsState struct {
@@ -72,26 +71,12 @@ func (s *eventSummarizer) resetUsers() {
 	s.userKeys.clear()
 }
 
-// Check whether this is a kind of event that we should summarize; if so, add it to our
-// counters and return true. False means that the event should be sent individually.
-func (s *eventSummarizer) summarizeEvent(evt Event) bool {
+// Adds this event to our counters, if it is a type of event we need to count.
+func (s *eventSummarizer) summarizeEvent(evt Event) {
 	var fe FeatureRequestEvent
 	var ok bool
 	if fe, ok = evt.(FeatureRequestEvent); !ok {
-		return false
-	}
-	if fe.TrackEvents {
-		return false
-	}
-
-	if fe.DebugEventsUntilDate != nil {
-		// The "last known past time" comes from the last HTTP response we got from the server.
-		// In case the client's time is set wrong, at least we know that any expiration date
-		// earlier than that point is definitely in the past.
-		if *fe.DebugEventsUntilDate > s.lastKnownPastTime &&
-			*fe.DebugEventsUntilDate > now() {
-			return false
-		}
+		return
 	}
 
 	key := counterKey{key: fe.Key}
@@ -118,16 +103,6 @@ func (s *eventSummarizer) summarizeEvent(evt Event) bool {
 	}
 	if creationDate > s.eventsState.endDate {
 		s.eventsState.endDate = creationDate
-	}
-
-	return true
-}
-
-// Marks the given timestamp (received from the server) as being in the past, in case the
-// client-side time is unreliable.
-func (s *eventSummarizer) setLastKnownPastTime(t uint64) {
-	if s.lastKnownPastTime == 0 || s.lastKnownPastTime < t {
-		s.lastKnownPastTime = t
 	}
 }
 

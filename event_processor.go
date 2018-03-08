@@ -12,17 +12,18 @@ import (
 )
 
 type eventProcessor struct {
-	queue      []interface{}
-	sdkKey     string
-	config     Config
-	eventsUri  string
-	client     *http.Client
-	eventsIn   chan eventInput
-	timeCh     chan uint64
-	closer     chan struct{}
-	closeOnce  sync.Once
-	closed     bool
-	summarizer *eventSummarizer
+	queue             []interface{}
+	sdkKey            string
+	config            Config
+	eventsUri         string
+	client            *http.Client
+	eventsIn          chan eventInput
+	timeCh            chan uint64
+	closer            chan struct{}
+	closeOnce         sync.Once
+	closed            bool
+	summarizer        *eventSummarizer
+	lastKnownPastTime uint64
 }
 
 // Payload of the eventsIn channel. If event is nil, this is a flush request. The reply
@@ -131,7 +132,7 @@ func newEventProcessor(sdkKey string, config Config, client *http.Client) *event
 			case <-usersResetTicker.C:
 				res.summarizer.resetUsers()
 			case serverTimestamp := <-res.timeCh:
-				res.summarizer.setLastKnownPastTime(serverTimestamp)
+				res.setLastKnownPastTime(serverTimestamp)
 			case <-res.closer:
 				flushTicker.Stop()
 				usersResetTicker.Stop()
@@ -299,17 +300,40 @@ func (ep *eventProcessor) sendEventInternal(evt Event) error {
 		}
 	}
 
-	if ep.summarizer.summarizeEvent(evt) {
-		return nil
-	}
+	// Always record the event in the summarizer.
+	ep.summarizer.summarizeEvent(evt)
 
-	if ep.config.SamplingInterval > 0 && rand.Int31n(ep.config.SamplingInterval) != 0 {
-		return nil
+	if ep.shouldTrackFullEvent(evt) {
+		// Sampling interval applies only to fully-tracked events.
+		if ep.config.SamplingInterval == 0 || rand.Int31n(ep.config.SamplingInterval) == 0 {
+			// Queue the event as-is; we'll transform it into an output event when we're flushing
+			// (to avoid doing that work on our main goroutine).
+			return ep.queueEvent(evt)
+		}
 	}
+	return nil
+}
 
-	// Queue the event as-is; we'll transform it into an output event when we're flushing
-	// (to avoid doing that work on our main goroutine).
-	return ep.queueEvent(evt)
+func (ep *eventProcessor) shouldTrackFullEvent(evt Event) bool {
+	switch evt := evt.(type) {
+	case FeatureRequestEvent:
+		if evt.TrackEvents {
+			return true
+		}
+		if evt.DebugEventsUntilDate != nil {
+			// The "last known past time" comes from the last HTTP response we got from the server.
+			// In case the client's time is set wrong, at least we know that any expiration date
+			// earlier than that point is definitely in the past.
+			if (ep.lastKnownPastTime != 0 && *evt.DebugEventsUntilDate > ep.lastKnownPastTime) ||
+				*evt.DebugEventsUntilDate > now() {
+				return true
+			}
+		}
+		return false
+	default:
+		// Custom and identify events are always included in full
+		return true
+	}
 }
 
 func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
@@ -365,6 +389,14 @@ func (ep *eventProcessor) queueEvent(event interface{}) error {
 	}
 	ep.queue = append(ep.queue, event)
 	return nil
+}
+
+// Marks the given timestamp (received from the server) as being in the past, in case the
+// client-side time is unreliable.
+func (ep *eventProcessor) setLastKnownPastTime(t uint64) {
+	if ep.lastKnownPastTime < t {
+		ep.lastKnownPastTime = t
+	}
 }
 
 func scrubUser(user User, allAttributesPrivate bool, globalPrivateAttributes []string) *User {
