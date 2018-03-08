@@ -155,12 +155,3 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 	}
 	assert.Equal(t, expectedFeatures, data.Features)
 }
-
-func findCounter(counters []flagCounterData, value interface{}) *flagCounterData {
-	for _, c := range counters {
-		if c.Value == value {
-			return &c
-		}
-	}
-	return nil
-}
