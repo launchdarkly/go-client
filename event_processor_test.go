@@ -141,7 +141,7 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
 
-func TestDebugFlagIsSetIfFlagIsTemporarilyInDebugMode(t *testing.T) {
+func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
 
@@ -459,8 +459,12 @@ func assertIndexEventMatches(t *testing.T, sourceEvent Event, user User, output 
 
 func assertFeatureEventMatches(t *testing.T, sourceEvent FeatureRequestEvent, flag FeatureFlag,
 	value interface{}, user User, debug bool, output map[string]interface{}) {
+	kind := "feature"
+	if debug {
+		kind = "debug"
+	}
 	expected := jsonMap(map[string]interface{}{
-		"kind":         "feature",
+		"kind":         kind,
 		"creationDate": float64(sourceEvent.CreationDate),
 		"key":          flag.Key,
 		"version":      float64(flag.Version),
@@ -468,9 +472,6 @@ func assertFeatureEventMatches(t *testing.T, sourceEvent FeatureRequestEvent, fl
 		"default":      nil,
 		"userKey":      *user.Key,
 	})
-	if debug {
-		expected["debug"] = true
-	}
 	assert.Equal(t, expected, output)
 }
 

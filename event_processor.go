@@ -45,7 +45,6 @@ type featureRequestEventOutput struct {
 	Default      interface{} `json:"default"`
 	Version      *int        `json:"version,omitempty"`
 	PrereqOf     *string     `json:"prereqOf,omitempty"`
-	Debug        *bool       `json:"debug,omitempty"`
 }
 
 // Serializable form of an identify event.
@@ -81,6 +80,7 @@ type summaryEventOutput struct {
 
 const (
 	FEATURE_REQUEST_EVENT = "feature"
+	FEATURE_DEBUG_EVENT   = "debug"
 	CUSTOM_EVENT          = "custom"
 	IDENTIFY_EVENT        = "identify"
 	INDEX_EVENT           = "index"
@@ -340,7 +340,6 @@ func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		fe := featureRequestEventOutput{
-			Kind:         FEATURE_REQUEST_EVENT,
 			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.Key,
 			UserKey:      evt.User.Key,
@@ -350,8 +349,9 @@ func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
 			PrereqOf:     evt.PrereqOf,
 		}
 		if !evt.TrackEvents && evt.DebugEventsUntilDate != nil {
-			debug := true
-			fe.Debug = &debug
+			fe.Kind = FEATURE_DEBUG_EVENT
+		} else {
+			fe.Kind = FEATURE_REQUEST_EVENT
 		}
 		return fe
 	case CustomEvent:
