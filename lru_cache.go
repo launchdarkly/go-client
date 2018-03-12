@@ -26,6 +26,9 @@ func (c *lruCache) clear() {
 // Stores a value in the cache, returning true (and marking it as recently used) if it was
 // already there, or false if it was newly added.
 func (c *lruCache) add(value interface{}) bool {
+	if c.capacity == 0 {
+		return false
+	}
 	if e, ok := c.values[value]; ok {
 		c.lruList.MoveToFront(e)
 		return true
