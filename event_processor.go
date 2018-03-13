@@ -40,7 +40,8 @@ type featureRequestEventOutput struct {
 	Kind         string      `json:"kind"`
 	CreationDate uint64      `json:"creationDate"`
 	Key          string      `json:"key"`
-	UserKey      *string     `json:"userKey"`
+	UserKey      *string     `json:"userKey,omitempty"`
+	User         *User       `json:"user,omitempty"`
 	Value        interface{} `json:"value"`
 	Default      interface{} `json:"default"`
 	Version      *int        `json:"version,omitempty"`
@@ -59,7 +60,8 @@ type customEventOutput struct {
 	Kind         string      `json:"kind"`
 	CreationDate uint64      `json:"creationDate"`
 	Key          string      `json:"key"`
-	UserKey      *string     `json:"userKey"`
+	UserKey      *string     `json:"userKey,omitempty"`
+	User         *User       `json:"user,omitempty"`
 	Data         interface{} `json:"data"`
 }
 
@@ -286,16 +288,18 @@ func (ep *eventProcessor) sendEventInternal(evt Event) error {
 
 	// For each user we haven't seen before, we add an index event - unless this is already
 	// an identify event for that user.
-	user := evt.GetBase().User
-	if !ep.summarizer.noticeUser(&user) {
-		if _, ok := evt.(IdentifyEvent); !ok {
-			indexEvent := indexEventOutput{
-				Kind:         INDEX_EVENT,
-				CreationDate: evt.GetBase().CreationDate,
-				User:         &user,
-			}
-			if err := ep.queueEvent(indexEvent); err != nil {
-				return err
+	if !ep.config.InlineUsersInEvents {
+		user := evt.GetBase().User
+		if !ep.summarizer.noticeUser(&user) {
+			if _, ok := evt.(IdentifyEvent); !ok {
+				indexEvent := indexEventOutput{
+					Kind:         INDEX_EVENT,
+					CreationDate: evt.GetBase().CreationDate,
+					User:         &user,
+				}
+				if err := ep.queueEvent(indexEvent); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -342,11 +346,15 @@ func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
 		fe := featureRequestEventOutput{
 			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.Key,
-			UserKey:      evt.User.Key,
 			Value:        evt.Value,
 			Default:      evt.Default,
 			Version:      evt.Version,
 			PrereqOf:     evt.PrereqOf,
+		}
+		if ep.config.InlineUsersInEvents {
+			fe.User = ep.makeOutputUser(evt.User)
+		} else {
+			fe.UserKey = evt.User.Key
 		}
 		if !evt.TrackEvents && evt.DebugEventsUntilDate != nil {
 			fe.Kind = FEATURE_DEBUG_EVENT
@@ -355,22 +363,26 @@ func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
 		}
 		return fe
 	case CustomEvent:
-		return customEventOutput{
+		ce := customEventOutput{
 			Kind:         CUSTOM_EVENT,
 			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.Key,
-			UserKey:      evt.User.Key,
 			Data:         evt.Data,
 		}
+		if ep.config.InlineUsersInEvents {
+			ce.User = ep.makeOutputUser(evt.User)
+		} else {
+			ce.UserKey = evt.User.Key
+		}
+		return ce
 	case IdentifyEvent:
-		user := scrubUser(evt.User, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
 		return identifyEventOutput{
 			Kind:         IDENTIFY_EVENT,
 			CreationDate: evt.BaseEvent.CreationDate,
-			User:         user,
+			User:         ep.makeOutputUser(evt.User),
 		}
 	case indexEventOutput:
-		evt.User = scrubUser(*evt.User, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
+		evt.User = ep.makeOutputUser(*evt.User)
 		return evt
 	default:
 		ep.config.Logger.Printf("Found unknown event type in output queue: %T", evt)
@@ -397,6 +409,10 @@ func (ep *eventProcessor) setLastKnownPastTime(t uint64) {
 	if ep.lastKnownPastTime < t {
 		ep.lastKnownPastTime = t
 	}
+}
+
+func (ep *eventProcessor) makeOutputUser(user User) *User {
+	return scrubUser(user, ep.config.AllAttributesPrivate, ep.config.PrivateAttributeNames)
 }
 
 func scrubUser(user User, allAttributesPrivate bool, globalPrivateAttributes []string) *User {

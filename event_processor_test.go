@@ -136,9 +136,33 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 
 	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
 
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, output[1])
+	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, false, output[1])
 
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+}
+
+func TestFeatureEventCanContainInlineUser(t *testing.T) {
+	config := epDefaultConfig
+	config.InlineUsersInEvents = true
+	ep, st := createEventProcessor(config)
+	defer ep.close()
+
+	flag := FeatureFlag{
+		Key:         "flagkey",
+		Version:     11,
+		TrackEvents: true,
+	}
+	variation := 1
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	ep.sendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 2, len(output))
+
+	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, true, output[0])
+
+	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
 }
 
 func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
@@ -162,7 +186,7 @@ func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 
 	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
 
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, true, output[1])
+	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, true, false, output[1])
 
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
@@ -193,9 +217,9 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 
 	assertIndexEventMatches(t, fe1, epDefaultUser, output[0])
 
-	assertFeatureEventMatches(t, fe1, flag1, value, epDefaultUser, false, output[1])
+	assertFeatureEventMatches(t, fe1, flag1, value, epDefaultUser, false, false, output[1])
 
-	assertFeatureEventMatches(t, fe2, flag2, value, epDefaultUser, false, output[2])
+	assertFeatureEventMatches(t, fe2, flag2, value, epDefaultUser, false, false, output[2])
 
 	assertSummaryEventHasCounter(t, flag1, value, 1, output[3])
 	assertSummaryEventHasCounter(t, flag2, value, 1, output[3])
@@ -252,13 +276,39 @@ func TestCustomEventIsQueuedWithUser(t *testing.T) {
 	assertIndexEventMatches(t, ce, epDefaultUser, output[0])
 
 	ceo := output[1]
-	expected := jsonMap(map[string]interface{}{
+	expected := map[string]interface{}{
 		"kind":         "custom",
 		"creationDate": float64(ce.CreationDate),
 		"key":          ce.Key,
 		"data":         data,
 		"userKey":      *epDefaultUser.Key,
-	})
+	}
+	assert.Equal(t, expected, ceo)
+}
+
+func TestCustomEventCanContainInlineUser(t *testing.T) {
+	config := epDefaultConfig
+	config.InlineUsersInEvents = true
+	ep, st := createEventProcessor(config)
+	defer ep.close()
+
+	data := map[string]interface{}{
+		"thing": "stuff",
+	}
+	ce := NewCustomEvent("eventkey", epDefaultUser, data)
+	ep.sendEvent(ce)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 1, len(output))
+
+	ceo := output[0]
+	expected := map[string]interface{}{
+		"kind":         "custom",
+		"creationDate": float64(ce.CreationDate),
+		"key":          ce.Key,
+		"data":         data,
+		"user":         jsonMap(epDefaultUser),
+	}
 	assert.Equal(t, expected, ceo)
 }
 
@@ -275,14 +325,14 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	ieo := output[0]
-	expected := jsonMap(map[string]interface{}{
+	expected := map[string]interface{}{
 		"kind":         "index",
 		"creationDate": float64(ce.CreationDate),
 		"user": map[string]interface{}{
 			"key":          "userKey",
 			"privateAttrs": []interface{}{"name"},
 		},
-	})
+	}
 	assert.Equal(t, expected, ieo)
 }
 
@@ -449,29 +499,33 @@ func jsonMap(o interface{}) map[string]interface{} {
 }
 
 func assertIndexEventMatches(t *testing.T, sourceEvent Event, user User, output map[string]interface{}) {
-	expected := jsonMap(map[string]interface{}{
+	expected := map[string]interface{}{
 		"kind":         "index",
 		"creationDate": float64(sourceEvent.GetBase().CreationDate),
-		"user":         user,
-	})
+		"user":         jsonMap(user),
+	}
 	assert.Equal(t, expected, output)
 }
 
 func assertFeatureEventMatches(t *testing.T, sourceEvent FeatureRequestEvent, flag FeatureFlag,
-	value interface{}, user User, debug bool, output map[string]interface{}) {
+	value interface{}, user User, debug bool, inlineUser bool, output map[string]interface{}) {
 	kind := "feature"
 	if debug {
 		kind = "debug"
 	}
-	expected := jsonMap(map[string]interface{}{
+	expected := map[string]interface{}{
 		"kind":         kind,
 		"creationDate": float64(sourceEvent.CreationDate),
 		"key":          flag.Key,
 		"version":      float64(flag.Version),
 		"value":        value,
 		"default":      nil,
-		"userKey":      *user.Key,
-	})
+	}
+	if inlineUser {
+		expected["user"] = jsonMap(user)
+	} else {
+		expected["userKey"] = *user.Key
+	}
 	assert.Equal(t, expected, output)
 }
 
