@@ -56,6 +56,8 @@ type Config struct {
 	UserKeysCapacity int
 	// The interval at which the event processor will reset its set of known user keys.
 	UserKeysFlushInterval time.Duration
+	// Set to true if you need to see the full user details in every analytics event.
+	InlineUsersInEvents bool
 }
 
 // The minimum value for Config.PollInterval. If you specify a smaller interval,
