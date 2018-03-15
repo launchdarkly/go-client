@@ -67,6 +67,7 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 	expected := jsonMap(map[string]interface{}{
 		"kind":         "identify",
 		"creationDate": float64(ie.CreationDate),
+		"key":          *epDefaultUser.Key,
 		"user":         epDefaultUser,
 	})
 	assert.Equal(t, expected, ieo)
@@ -88,6 +89,7 @@ func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
 	expected := jsonMap(map[string]interface{}{
 		"kind":         "identify",
 		"creationDate": float64(ie.CreationDate),
+		"key":          "userKey",
 		"user": map[string]interface{}{
 			"key":          "userKey",
 			"privateAttrs": []interface{}{"name"},

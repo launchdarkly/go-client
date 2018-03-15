@@ -50,9 +50,10 @@ type featureRequestEventOutput struct {
 
 // Serializable form of an identify event.
 type identifyEventOutput struct {
-	Kind         string `json:"kind"`
-	CreationDate uint64 `json:"creationDate"`
-	User         *User  `json:"user"`
+	Kind         string  `json:"kind"`
+	CreationDate uint64  `json:"creationDate"`
+	Key          *string `json:"key"`
+	User         *User   `json:"user"`
 }
 
 // Serializable form of a custom event. It has a user key instead of a user object.
@@ -379,6 +380,7 @@ func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
 		return identifyEventOutput{
 			Kind:         IDENTIFY_EVENT,
 			CreationDate: evt.BaseEvent.CreationDate,
+			Key:          evt.User.Key,
 			User:         ep.makeOutputUser(evt.User),
 		}
 	case indexEventOutput:
