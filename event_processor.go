@@ -261,30 +261,16 @@ func (ep *eventProcessor) sendEvent(evt Event) {
 	}
 }
 
-// Posts an event and waits until it has been processed, returning the error result if any.
-func (ep *eventProcessor) sendEventSync(evt Event) error {
-	if evt == nil {
-		return nil
-	}
-	input := eventInput{
-		event: evt,
-		reply: make(chan error),
-	}
-	ep.eventsIn <- input
-	err := <-input.reply
-	return err
-}
-
 func (ep *eventProcessor) dispatchEvent(evt Event, replyCh chan error) {
-	err := ep.sendEventInternal(evt)
+	ep.sendEventInternal(evt)
 	if replyCh != nil {
-		replyCh <- err
+		replyCh <- nil
 	}
 }
 
-func (ep *eventProcessor) sendEventInternal(evt Event) error {
+func (ep *eventProcessor) sendEventInternal(evt Event) {
 	if !ep.config.SendEvents {
-		return nil
+		return
 	}
 
 	// For each user we haven't seen before, we add an index event - unless this is already
