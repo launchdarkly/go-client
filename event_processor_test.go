@@ -338,6 +338,14 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 	assert.Equal(t, expected, ieo)
 }
 
+func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+	ep.flush()
+
+	assert.Nil(t, st.messageSent)
+}
+
 func TestSdkKeyIsSent(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
