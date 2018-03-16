@@ -284,9 +284,7 @@ func (ep *eventProcessor) sendEventInternal(evt Event) {
 					CreationDate: evt.GetBase().CreationDate,
 					User:         &user,
 				}
-				if err := ep.queueEvent(indexEvent); err != nil {
-					return err
-				}
+				ep.queueEvent(indexEvent)
 			}
 		}
 	}
