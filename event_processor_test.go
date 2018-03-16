@@ -338,18 +338,12 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 	assert.Equal(t, expected, ieo)
 }
 
-func TestSendEventSyncReturnsErrorIfQueueFull(t *testing.T) {
-	config := epDefaultConfig
-	config.Capacity = 1
-	ep, _ := createEventProcessor(config)
+func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.close()
+	ep.flush()
 
-	ie := NewIdentifyEvent(epDefaultUser)
-	err := ep.sendEventSync(ie)
-	assert.NoError(t, err)
-
-	err = ep.sendEventSync(ie)
-	assert.Error(t, err)
+	assert.Nil(t, st.messageSent)
 }
 
 func TestSdkKeyIsSent(t *testing.T) {
