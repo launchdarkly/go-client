@@ -31,11 +31,11 @@ func TestOfflineModeAlwaysReturnsDefaultValue(t *testing.T) {
 	key := "foo"
 	user := User{Key: &key}
 
-	//Toggle
+	//BoolVariation
 	expected := true
-	actual, err := client.Toggle("featureKey", user, expected)
+	actual, err := client.BoolVariation("featureKey", user, expected)
 	if err != nil {
-		t.Errorf("Unexpected error in Toggle: %+v", err)
+		t.Errorf("Unexpected error in BoolVariation: %+v", err)
 	}
 	if actual != expected {
 		t.Errorf("Offline mode should return default value, but doesn't")
@@ -85,7 +85,7 @@ func TestOfflineModeAlwaysReturnsDefaultValue(t *testing.T) {
 	client.Close()
 }
 
-func TestToggle(t *testing.T) {
+func TestBoolVariation(t *testing.T) {
 	expected := true
 
 	variations := make([]interface{}, 2)
@@ -96,13 +96,13 @@ func TestToggle(t *testing.T) {
 	defer client.Close()
 
 	userKey := "userKey"
-	actual, err := client.Toggle("validFeatureKey", User{Key: &userKey}, false)
+	actual, err := client.BoolVariation("validFeatureKey", User{Key: &userKey}, false)
 
 	if err != nil {
-		t.Errorf("Unexpected error when calling Toggle: %+v", err)
+		t.Errorf("Unexpected error when calling BoolVariation: %+v", err)
 	}
 	if actual != expected {
-		t.Errorf("Got unexpected result when calling Toggle: %+v but expected: %+v", actual, expected)
+		t.Errorf("Got unexpected result when calling BoolVariation: %+v but expected: %+v", actual, expected)
 	}
 }
 
