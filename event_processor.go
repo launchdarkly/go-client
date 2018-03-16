@@ -3,7 +3,6 @@ package ldclient
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
@@ -24,6 +23,7 @@ type eventProcessor struct {
 	closed            bool
 	summarizer        *eventSummarizer
 	lastKnownPastTime uint64
+	capacityExceeded  bool
 }
 
 // Payload of the eventsIn channel. If event is nil, this is a flush request. The reply
@@ -297,10 +297,9 @@ func (ep *eventProcessor) sendEventInternal(evt Event) {
 		if ep.config.SamplingInterval == 0 || rand.Int31n(ep.config.SamplingInterval) == 0 {
 			// Queue the event as-is; we'll transform it into an output event when we're flushing
 			// (to avoid doing that work on our main goroutine).
-			return ep.queueEvent(evt)
+			ep.queueEvent(evt)
 		}
 	}
-	return nil
 }
 
 func (ep *eventProcessor) shouldTrackFullEvent(evt Event) bool {
@@ -376,17 +375,19 @@ func (ep *eventProcessor) makeOutputEvent(evt interface{}) interface{} {
 	}
 }
 
-func (ep *eventProcessor) queueEvent(event interface{}) error {
+func (ep *eventProcessor) queueEvent(event interface{}) {
 	if ep.closed {
-		return nil
+		return
 	}
 	if len(ep.queue) >= ep.config.Capacity {
-		message := "Exceeded event queue capacity. Increase capacity to avoid dropping events."
-		ep.config.Logger.Printf("WARN: %s", message)
-		return errors.New(message)
+		if !ep.capacityExceeded {
+			ep.capacityExceeded = true
+			ep.config.Logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
+		}
+	} else {
+		ep.capacityExceeded = false
+		ep.queue = append(ep.queue, event)
 	}
-	ep.queue = append(ep.queue, event)
-	return nil
 }
 
 // Marks the given timestamp (received from the server) as being in the past, in case the
