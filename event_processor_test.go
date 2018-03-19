@@ -46,8 +46,11 @@ const (
 type stubTransport struct {
 	messageSent *http.Request
 	statusCode  int
+	serverTime  uint64
 	error       error
 }
+
+var epoch = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func init() {
 	sort.Strings(BuiltinAttributes)
@@ -191,6 +194,74 @@ func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, true, false, output[1])
 
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+}
+
+func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+
+	// Pick a server time that is somewhat behind the client time
+	serverTime := now() - 20000
+	st.serverTime = serverTime
+
+	// Send and flush an event we don't care about, just to set the last server time
+	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
+	ep.sendEvent(ie)
+	ep.flush()
+
+	// Now send an event with debug mode on, with a "debug until" time that is further in
+	// the future than the server time, but in the past compared to the client.
+	debugUntil := serverTime + 1000
+	flag := FeatureFlag{
+		Key:                  "flagkey",
+		Version:              11,
+		TrackEvents:          false,
+		DebugEventsUntilDate: &debugUntil,
+	}
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, nil, nil, nil, nil)
+	ep.sendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 2, len(output))
+
+	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
+
+	// should get a summary event only, not a full feature event
+	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
+}
+
+func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.close()
+
+	// Pick a server time that is somewhat ahead of the client time
+	serverTime := now() + 20000
+	st.serverTime = serverTime
+
+	// Send and flush an event we don't care about, just to set the last server time
+	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
+	ep.sendEvent(ie)
+	ep.flush()
+
+	// Now send an event with debug mode on, with a "debug until" time that is further in
+	// the future than the client time, but in the past compared to the server.
+	debugUntil := serverTime - 1000
+	flag := FeatureFlag{
+		Key:                  "flagkey",
+		Version:              11,
+		TrackEvents:          false,
+		DebugEventsUntilDate: &debugUntil,
+	}
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, nil, nil, nil, nil)
+	ep.sendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 2, len(output))
+
+	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
+
+	// should get a summary event only, not a full feature event
+	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
 }
 
 func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
@@ -574,6 +645,11 @@ func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 	resp := http.Response{
 		StatusCode: t.statusCode,
+		Header:     make(http.Header),
+	}
+	if t.serverTime != 0 {
+		ts := epoch.Add(time.Duration(t.serverTime) * time.Millisecond)
+		resp.Header.Add("Date", ts.Format(http.TimeFormat))
 	}
 	return &resp, nil
 }

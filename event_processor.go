@@ -311,8 +311,9 @@ func (ep *eventProcessor) shouldTrackFullEvent(evt Event) bool {
 		if evt.DebugEventsUntilDate != nil {
 			// The "last known past time" comes from the last HTTP response we got from the server.
 			// In case the client's time is set wrong, at least we know that any expiration date
-			// earlier than that point is definitely in the past.
-			if (ep.lastKnownPastTime != 0 && *evt.DebugEventsUntilDate > ep.lastKnownPastTime) ||
+			// earlier than that point is definitely in the past.  If there's any discrepancy, we
+			// want to err on the side of cutting off event debugging sooner.
+			if *evt.DebugEventsUntilDate > ep.lastKnownPastTime &&
 				*evt.DebugEventsUntilDate > now() {
 				return true
 			}
