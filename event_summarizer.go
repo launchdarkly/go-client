@@ -5,11 +5,11 @@ package ldclient
 // deliberately not thread-safe, because they should always be called from EventProcessor's
 // single event-processing goroutine.
 type eventSummarizer struct {
-	eventsState summaryEventsState
+	eventsState eventSummary
 	userKeys    lruCache
 }
 
-type summaryEventsState struct {
+type eventSummary struct {
 	counters  map[counterKey]*counterValue
 	startDate uint64
 	endDate   uint64
@@ -39,21 +39,15 @@ type flagCounterData struct {
 	Unknown *bool       `json:"unknown,omitempty"`
 }
 
-type summaryOutput struct {
-	StartDate uint64                     `json:"startDate"`
-	EndDate   uint64                     `json:"endDate"`
-	Features  map[string]flagSummaryData `json:"features"`
-}
-
-func NewEventSummarizer(config Config) *eventSummarizer {
+func newEventSummarizer(config Config) *eventSummarizer {
 	return &eventSummarizer{
-		eventsState: newSummaryEventsState(),
+		eventsState: newEventSummary(),
 		userKeys:    newLruCache(config.UserKeysCapacity),
 	}
 }
 
-func newSummaryEventsState() summaryEventsState {
-	return summaryEventsState{
+func newEventSummary() eventSummary {
+	return eventSummary{
 		counters: make(map[counterKey]*counterValue),
 	}
 }
@@ -107,42 +101,8 @@ func (s *eventSummarizer) summarizeEvent(evt Event) {
 }
 
 // Returns a snapshot of the current summarized event data, and resets this state.
-func (s *eventSummarizer) snapshot() summaryEventsState {
+func (s *eventSummarizer) snapshot() eventSummary {
 	state := s.eventsState
-	s.eventsState = newSummaryEventsState()
+	s.eventsState = newEventSummary()
 	return state
-}
-
-// Transforms the summary data into the format used for event sending.
-func makeSummaryOutput(snapshot summaryEventsState) summaryOutput {
-	features := make(map[string]flagSummaryData)
-	for key, value := range snapshot.counters {
-		var flagData flagSummaryData
-		var known bool
-		if flagData, known = features[key.key]; !known {
-			flagData = flagSummaryData{
-				Default:  value.flagDefault,
-				Counters: make([]flagCounterData, 0, 2),
-			}
-		}
-		data := flagCounterData{
-			Value: value.flagValue,
-			Count: value.count,
-		}
-		if key.version == 0 {
-			unknown := true
-			data.Unknown = &unknown
-		} else {
-			version := key.version
-			data.Version = &version
-		}
-		flagData.Counters = append(flagData.Counters, data)
-		features[key.key] = flagData
-	}
-
-	return summaryOutput{
-		StartDate: snapshot.startDate,
-		EndDate:   snapshot.endDate,
-		Features:  features,
-	}
 }
