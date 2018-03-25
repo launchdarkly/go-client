@@ -454,7 +454,7 @@ func TestFlushReturnsHttpResponseError(t *testing.T) {
 	ep.SendEvent(ie)
 
 	err := ep.Flush()
-	assert.NoError(t, err)
+	assert.Equal(t, "Unexpected response code: 400 when accessing URL: /bulk", err.Error())
 }
 
 func jsonMap(o interface{}) map[string]interface{} {
@@ -545,6 +545,7 @@ func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	resp := http.Response{
 		StatusCode: t.statusCode,
 		Header:     make(http.Header),
+		Request:    request,
 	}
 	if t.serverTime != 0 {
 		ts := epoch.Add(time.Duration(t.serverTime) * time.Millisecond)

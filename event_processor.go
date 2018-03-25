@@ -35,10 +35,10 @@ type eventConsumer struct {
 	summarizer        *eventSummarizer
 	lastKnownPastTime uint64
 	capacityExceeded  bool
-	timeCh            chan uint64
+	responseCh        chan *http.Response
 	closer            chan struct{}
 	closeOnce         sync.Once
-	closed            bool
+	disabled          bool
 }
 
 type eventPayloadSendTask struct {
@@ -139,7 +139,7 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 		eventsIn:   eventsIn,
 		queue:      make([]interface{}, 0),
 		client:     client,
-		timeCh:     make(chan uint64),
+		responseCh: make(chan *http.Response),
 		closer:     make(chan struct{}),
 		summarizer: newEventSummarizer(config),
 	}
@@ -200,15 +200,15 @@ func (ec *eventConsumer) start() {
 				ec.dispatchFlush(nil)
 			case <-usersResetTicker.C:
 				ec.summarizer.resetUsers()
-			case serverTimestamp := <-ec.timeCh:
-				ec.setLastKnownPastTime(serverTimestamp)
+			case resp := <-ec.responseCh:
+				ec.handleResponse(resp)
 			case <-ec.closer:
 				flushTicker.Stop()
 				usersResetTicker.Stop()
 				waitCh := make(chan error)
 				ec.dispatchFlush(waitCh)
 				<-waitCh
-				ec.closed = true
+				ec.disabled = true
 				return
 			}
 		}
@@ -222,7 +222,7 @@ func (ec *eventConsumer) close() {
 }
 
 func (ec *eventConsumer) sendEventInternal(evt Event) {
-	if ec.closed {
+	if ec.disabled {
 		return
 	}
 	// For each user we haven't seen before, we add an index event - unless this is already
@@ -298,36 +298,54 @@ func (ec *eventConsumer) setLastKnownPastTime(t uint64) {
 }
 
 func (ec *eventConsumer) dispatchFlush(replyCh chan error) {
-	if ec.closed {
+	if ec.disabled {
 		return
 	}
 	events := ec.queue
 	summary := ec.summarizer.snapshot()
 	ec.queue = make([]interface{}, 0)
 
-	task := eventPayloadSendTask{
-		consumer: ec,
-		events:   events,
-		summary:  summary,
-		replyCh:  replyCh,
+	if len(events) == 0 && len(summary.counters) == 0 {
+		if replyCh != nil {
+			replyCh <- nil
+		}
+	} else {
+		task := eventPayloadSendTask{
+			consumer: ec,
+			events:   events,
+			summary:  summary,
+			replyCh:  replyCh,
+		}
+		task.start()
 	}
-	task.start()
+}
+
+func (ec *eventConsumer) handleResponse(resp *http.Response) {
+	err := checkStatusCode(resp.StatusCode, resp.Request.URL.String())
+	if err != nil {
+		ec.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
+		if err != nil && err.Code == 401 {
+			ec.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
+			ec.disabled = true
+		}
+	} else {
+		dt, err := http.ParseTime(resp.Header.Get("Date"))
+		if err == nil {
+			tm := toUnixMillis(dt)
+			if tm > ec.lastKnownPastTime {
+				ec.lastKnownPastTime = tm
+			}
+		}
+	}
 }
 
 func (t *eventPayloadSendTask) start() {
-	if len(t.events) == 0 && len(t.summary.counters) == 0 {
-		t.completed(nil)
-	} else {
-		go func() {
-			t.completed(t.flushInternal())
-		}()
-	}
-}
-
-func (t *eventPayloadSendTask) completed(err error) {
-	if t.replyCh != nil {
-		t.replyCh <- err
-	}
+	go func() {
+		err := t.flushInternal()
+		if t.replyCh != nil {
+			t.replyCh <- err
+		}
+	}()
 }
 
 func (t *eventPayloadSendTask) flushInternal() error {
@@ -375,21 +393,9 @@ func (t *eventPayloadSendTask) flushInternal() error {
 		t.consumer.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
 		return respErr
 	}
+	t.consumer.responseCh <- resp
 	err := checkStatusCode(resp.StatusCode, eventsUri)
-	if err != nil {
-		t.consumer.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
-		if err != nil && err.Code == 401 {
-			t.consumer.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
-			t.consumer.closed = true
-			return err
-		}
-	} else {
-		tm, err := http.ParseTime(resp.Header.Get("Date"))
-		if err == nil {
-			t.consumer.timeCh <- toUnixMillis(tm)
-		}
-	}
-	return nil
+	return err
 }
 
 func (t *eventPayloadSendTask) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
