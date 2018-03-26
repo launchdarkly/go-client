@@ -289,14 +289,6 @@ func (ec *eventConsumer) queueEvent(event interface{}) {
 	}
 }
 
-// Marks the given timestamp (received from the server) as being in the past, in case the
-// client-side time is unreliable.
-func (ec *eventConsumer) setLastKnownPastTime(t uint64) {
-	if ec.lastKnownPastTime < t {
-		ec.lastKnownPastTime = t
-	}
-}
-
 func (ec *eventConsumer) dispatchFlush(replyCh chan error) {
 	if ec.disabled {
 		return
