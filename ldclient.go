@@ -307,12 +307,6 @@ func (client *LDClient) BoolVariation(key string, user User, defaultVal bool) (b
 	return result, err
 }
 
-// Deprecated: Use BoolVariation().
-func (client *LDClient) Toggle(key string, user User, defaultVal bool) (bool, error) {
-	client.config.Logger.Println("WARN: Deprecated Toggle() called on LDClient. Use BoolVariation() instead.")
-	return client.BoolVariation(key, user, defaultVal)
-}
-
 // Returns the value of a feature flag (whose variations are integers) for the given user.
 // Returns defaultVal if there is an error, if the flag doesn't exist, or the feature is turned off.
 func (client *LDClient) IntVariation(key string, user User, defaultVal int) (int, error) {
