@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const Version = "3.0.0"
+const Version = "3.1.0"
 
 // The LaunchDarkly client. Client instances are thread-safe.
 // Applications should instantiate a single instance for the lifetime
@@ -277,26 +277,7 @@ func (client *LDClient) AllFlags(user User) map[string]interface{} {
 }
 
 func (client *LDClient) evalFlag(flag FeatureFlag, user User) (interface{}, *int, []FeatureRequestEvent) {
-	var prereqEvents []FeatureRequestEvent
-	if flag.On {
-		evalResult, err := flag.EvaluateExplain(user, client.store)
-		prereqEvents = evalResult.PrerequisiteRequestEvents
-
-		if err != nil {
-			return nil, nil, prereqEvents
-		}
-
-		if evalResult.Value != nil {
-			return evalResult.Value, evalResult.Variation, prereqEvents
-		}
-		// If the value is nil, but the error is not, fall through and use the off variation
-	}
-
-	if flag.OffVariation != nil && *flag.OffVariation < len(flag.Variations) {
-		value := flag.Variations[*flag.OffVariation]
-		return value, flag.OffVariation, prereqEvents
-	}
-	return nil, nil, prereqEvents
+	return flag.Evaluate(user, client.store)
 }
 
 // Returns the value of a boolean feature flag for a given user. Returns defaultVal if
