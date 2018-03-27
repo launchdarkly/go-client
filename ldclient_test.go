@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type TestUpdateProcessor struct{}
@@ -32,55 +34,34 @@ func TestOfflineModeAlwaysReturnsDefaultValue(t *testing.T) {
 	user := User{Key: &key}
 
 	//BoolVariation
-	expected := true
-	actual, err := client.BoolVariation("featureKey", user, expected)
-	if err != nil {
-		t.Errorf("Unexpected error in BoolVariation: %+v", err)
-	}
-	if actual != expected {
-		t.Errorf("Offline mode should return default value, but doesn't")
-	}
+	actual, err := client.BoolVariation("featureKey", user, true)
+	assert.NoError(t, err)
+	assert.True(t, actual)
 
 	//IntVariation
 	expectedInt := 100
 	actualInt, err := client.IntVariation("featureKey", user, expectedInt)
-	if err != nil {
-		t.Errorf("Unexpected error in IntVariation: %+v", err)
-	}
-	if actualInt != expectedInt {
-		t.Errorf("Offline mode should return default value: %+v, instead returned: %+v", expectedInt, actualInt)
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, expectedInt, actualInt)
 
 	//Float64Variation
 	expectedFloat64 := 100.0
 	actualFloat64, err := client.Float64Variation("featureKey", user, expectedFloat64)
-	if err != nil {
-		t.Errorf("Unexpected error in Float64Variation: %+v", err)
-	}
-	if actualFloat64 != expectedFloat64 {
-		t.Errorf("Offline mode should return default value, but doesn't")
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, expectedFloat64, actualFloat64)
 
 	//StringVariation
 	expectedString := "expected"
 	actualString, err := client.StringVariation("featureKey", user, expectedString)
-	if err != nil {
-		t.Errorf("Unexpected error in StringVariation: %+v", err)
-	}
-	if actualString != expectedString {
-		t.Errorf("Offline mode should return default value, but doesn't")
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, expectedString, actualString)
 
 	//JsonVariation
 	expectedJsonString := `{"fieldName":"fieldValue"}`
 	expectedJson := json.RawMessage([]byte(expectedJsonString))
 	actualJson, err := client.JsonVariation("featureKey", user, expectedJson)
-	if err != nil {
-		t.Errorf("Unexpected error in JsonVariation: %+v", err)
-	}
-	if string([]byte(actualJson)) != string([]byte(expectedJson)) {
-		t.Errorf("Offline mode should return default value (%+v), instead got: %+v", expectedJson, actualJson)
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, string([]byte(expectedJson)), string([]byte(actualJson)))
 
 	client.Close()
 }
@@ -98,12 +79,8 @@ func TestBoolVariation(t *testing.T) {
 	userKey := "userKey"
 	actual, err := client.BoolVariation("validFeatureKey", User{Key: &userKey}, false)
 
-	if err != nil {
-		t.Errorf("Unexpected error when calling BoolVariation: %+v", err)
-	}
-	if actual != expected {
-		t.Errorf("Got unexpected result when calling BoolVariation: %+v but expected: %+v", actual, expected)
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, expected, actual)
 }
 
 func TestIntVariation(t *testing.T) {
@@ -119,12 +96,8 @@ func TestIntVariation(t *testing.T) {
 	userKey := "userKey"
 	actual, err := client.IntVariation("validFeatureKey", User{Key: &userKey}, 10000)
 
-	if err != nil {
-		t.Errorf("Unexpected error when calling IntVariation: %+v", err)
-	}
-	if actual != int(expected) {
-		t.Errorf("Got unexpected result when calling IntVariation: %+v but expected: %+v", actual, expected)
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, int(expected), actual)
 }
 
 func TestFloat64Variation(t *testing.T) {
@@ -140,12 +113,8 @@ func TestFloat64Variation(t *testing.T) {
 	userKey := "userKey"
 	actual, err := client.Float64Variation("validFeatureKey", User{Key: &userKey}, 0.0)
 
-	if err != nil {
-		t.Errorf("Unexpected error when calling Float64Variation: %+v", err)
-	}
-	if actual != expected {
-		t.Errorf("Got unexpected result when calling Float64Variation: %+v but expected: %+v", actual, expected)
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, expected, actual)
 }
 
 func TestJsonVariation(t *testing.T) {
@@ -161,12 +130,8 @@ func TestJsonVariation(t *testing.T) {
 	var actual json.RawMessage
 	actual, err := client.JsonVariation("validFeatureKey", User{Key: &userKey}, []byte(`{"default":"default"}`))
 
-	if err != nil {
-		t.Errorf("Unexpected error when calling JsonVariation: %+v", err)
-	}
-	if string(actual) != expectedJsonString {
-		t.Errorf("Got unexpected result when calling JsonVariation: %+v but expected: %+v", string(actual), expectedJsonString)
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, expectedJsonString, string(actual))
 }
 
 func TestSecureModeHash(t *testing.T) {
@@ -179,9 +144,7 @@ func TestSecureModeHash(t *testing.T) {
 
 	hash := client.SecureModeHash(User{Key: &key})
 
-	if hash != expected {
-		t.Errorf("Got unexpected result when calling SecureModeHash: %s but expected %s", hash, expected)
-	}
+	assert.Equal(t, expected, hash)
 }
 
 // Creates LdClient loaded with one feature flag with key: "validFeatureKey".
