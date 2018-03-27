@@ -50,7 +50,13 @@ type Config struct {
 	Offline               bool
 	AllAttributesPrivate  bool
 	PrivateAttributeNames []string
-	UpdateProcessor       UpdateProcessor
+	// An object that is responsible for receiving feature flag updates from LaunchDarkly.
+	// If nil, a default implementation will be used depending on the rest of the configuration
+	// (streaming, polling, etc.); a custom implementation can be substituted for testing.
+	UpdateProcessor UpdateProcessor
+	// An object that is responsible for recording or sending analytics events. If nil, a
+	// default implementation will be used; a custom implementation can be substituted for testing.
+	EventProcessor EventProcessor
 	// The number of user keys that the event processor can remember at any one time, so that
 	// duplicate user details will not be sent in analytics events.
 	UserKeysCapacity int
@@ -130,7 +136,9 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 		return &client, nil
 	}
 
-	if config.SendEvents {
+	if config.EventProcessor != nil {
+		client.eventProcessor = config.EventProcessor
+	} else if config.SendEvents {
 		client.eventProcessor = newDefaultEventProcessor(sdkKey, config, nil)
 	} else {
 		client.eventProcessor = newNullEventProcessor()
