@@ -33,6 +33,7 @@ type eventConsumer struct {
 	eventsIn          chan eventInput
 	queue             []interface{}
 	summarizer        *eventSummarizer
+	userKeys          lruCache
 	lastKnownPastTime uint64
 	capacityExceeded  bool
 	responseCh        chan *http.Response
@@ -141,7 +142,8 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 		client:     client,
 		responseCh: make(chan *http.Response),
 		closer:     make(chan struct{}),
-		summarizer: newEventSummarizer(config),
+		summarizer: newEventSummarizer(),
+		userKeys:   newLruCache(config.UserKeysCapacity),
 	}
 	res := &defaultEventProcessor{
 		eventsIn: eventsIn,
@@ -199,7 +201,7 @@ func (ec *eventConsumer) start() {
 			case <-flushTicker.C:
 				ec.dispatchFlush(nil)
 			case <-usersResetTicker.C:
-				ec.summarizer.resetUsers()
+				ec.userKeys.clear()
 			case resp := <-ec.responseCh:
 				ec.handleResponse(resp)
 			case <-ec.closer:
@@ -229,7 +231,7 @@ func (ec *eventConsumer) sendEventInternal(evt Event) {
 	// an identify event for that user.
 	if !ec.config.InlineUsersInEvents {
 		user := evt.GetBase().User
-		if !ec.summarizer.noticeUser(&user) {
+		if !ec.noticeUser(&user) {
 			if _, ok := evt.(IdentifyEvent); !ok {
 				indexEvent := indexEventOutput{
 					Kind:         INDEX_EVENT,
@@ -252,6 +254,14 @@ func (ec *eventConsumer) sendEventInternal(evt Event) {
 			ec.queueEvent(evt)
 		}
 	}
+}
+
+// Add to the set of users we've noticed, and return true if the user was already known to us.
+func (ec *eventConsumer) noticeUser(user *User) bool {
+	if user == nil || user.Key == nil {
+		return true
+	}
+	return ec.userKeys.add(*user.Key)
 }
 
 func (ec *eventConsumer) shouldTrackFullEvent(evt Event) bool {

@@ -7,42 +7,9 @@ import (
 )
 
 var user = NewUser("key")
-var esDefaultConfig = Config{
-	UserKeysCapacity: 100,
-}
-
-func TestNoticeUserReturnsFalseForNeverSeenUser(t *testing.T) {
-	es := newEventSummarizer(esDefaultConfig)
-	result := es.noticeUser(&user)
-	assert.False(t, result)
-}
-
-func TestNoticeUserReturnsTrueForPreviouslySeenUser(t *testing.T) {
-	es := newEventSummarizer(esDefaultConfig)
-	es.noticeUser(&user)
-	user2 := user
-	result := es.noticeUser(&user2)
-	assert.True(t, result)
-}
-
-func TestOldestUserForgottenIfCapacityExceeded(t *testing.T) {
-	config := Config{
-		UserKeysCapacity: 2,
-	}
-	es := newEventSummarizer(config)
-	user1 := NewUser("key1")
-	user2 := NewUser("key2")
-	user3 := NewUser("key3")
-	es.noticeUser(&user1)
-	es.noticeUser(&user2)
-	es.noticeUser(&user3)
-	assert.True(t, es.noticeUser(&user3))
-	assert.True(t, es.noticeUser(&user2))
-	assert.False(t, es.noticeUser(&user1))
-}
 
 func TestSummarizeEventDoesNothingForIdentifyEvent(t *testing.T) {
-	es := newEventSummarizer(esDefaultConfig)
+	es := newEventSummarizer()
 	snapshot := es.snapshot()
 
 	event := NewIdentifyEvent(user)
@@ -52,7 +19,7 @@ func TestSummarizeEventDoesNothingForIdentifyEvent(t *testing.T) {
 }
 
 func TestSummarizeEventDoesNothingForCustomEvent(t *testing.T) {
-	es := newEventSummarizer(esDefaultConfig)
+	es := newEventSummarizer()
 	snapshot := es.snapshot()
 
 	event := NewCustomEvent("whatever", user, nil)
@@ -62,7 +29,7 @@ func TestSummarizeEventDoesNothingForCustomEvent(t *testing.T) {
 }
 
 func TestSummarizeEventSetsStartAndEndDates(t *testing.T) {
-	es := newEventSummarizer(esDefaultConfig)
+	es := newEventSummarizer()
 	flag := FeatureFlag{
 		Key: "key",
 	}
@@ -81,7 +48,7 @@ func TestSummarizeEventSetsStartAndEndDates(t *testing.T) {
 }
 
 func TestSummarizeEventIncrementsCounters(t *testing.T) {
-	es := newEventSummarizer(esDefaultConfig)
+	es := newEventSummarizer()
 	flag1 := FeatureFlag{
 		Key:     "key1",
 		Version: 11,

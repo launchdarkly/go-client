@@ -6,7 +6,6 @@ package ldclient
 // single event-processing goroutine.
 type eventSummarizer struct {
 	eventsState eventSummary
-	userKeys    lruCache
 }
 
 type eventSummary struct {
@@ -39,30 +38,14 @@ type flagCounterData struct {
 	Unknown *bool       `json:"unknown,omitempty"`
 }
 
-func newEventSummarizer(config Config) *eventSummarizer {
-	return &eventSummarizer{
-		eventsState: newEventSummary(),
-		userKeys:    newLruCache(config.UserKeysCapacity),
-	}
+func newEventSummarizer() *eventSummarizer {
+	return &eventSummarizer{eventsState: newEventSummary()}
 }
 
 func newEventSummary() eventSummary {
 	return eventSummary{
 		counters: make(map[counterKey]*counterValue),
 	}
-}
-
-// Add to the set of users we've noticed, and return true if the user was already known to us.
-func (s *eventSummarizer) noticeUser(user *User) bool {
-	if user == nil || user.Key == nil {
-		return true
-	}
-	return s.userKeys.add(*user.Key)
-}
-
-// Clears the set of users we've noticed.
-func (s *eventSummarizer) resetUsers() {
-	s.userKeys.clear()
 }
 
 // Adds this event to our counters, if it is a type of event we need to count.
