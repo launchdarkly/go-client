@@ -22,7 +22,7 @@ const Version = "3.1.0"
 type LDClient struct {
 	sdkKey          string
 	config          Config
-	eventProcessor  *eventProcessor
+	eventProcessor  EventProcessor
 	updateProcessor UpdateProcessor
 	store           FeatureStore
 }
@@ -126,11 +126,15 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 
 	if config.Offline {
 		config.Logger.Println("Started LaunchDarkly in offline mode")
-		client.config.SendEvents = false
+		client.eventProcessor = newNullEventProcessor()
 		return &client, nil
 	}
 
-	client.eventProcessor = newEventProcessor(sdkKey, config, nil)
+	if config.SendEvents {
+		client.eventProcessor = newDefaultEventProcessor(sdkKey, config, nil)
+	} else {
+		client.eventProcessor = newNullEventProcessor()
+	}
 
 	if config.UseLdd {
 		config.Logger.Println("Started LaunchDarkly in LDD mode")
@@ -174,7 +178,7 @@ func (client *LDClient) Identify(user User) error {
 		client.config.Logger.Printf("WARN: Identify called with empty/nil user key!")
 	}
 	evt := NewIdentifyEvent(user)
-	client.eventProcessor.sendEvent(evt)
+	client.eventProcessor.SendEvent(evt)
 	return nil
 }
 
@@ -188,7 +192,7 @@ func (client *LDClient) Track(key string, user User, data interface{}) error {
 		client.config.Logger.Printf("WARN: Track called with empty/nil user key!")
 	}
 	evt := NewCustomEvent(key, user, data)
-	client.eventProcessor.sendEvent(evt)
+	client.eventProcessor.SendEvent(evt)
 	return nil
 }
 
@@ -219,7 +223,7 @@ func (client *LDClient) Close() {
 	if client.IsOffline() {
 		return
 	}
-	client.eventProcessor.close()
+	client.eventProcessor.Close()
 	if !client.config.UseLdd {
 		client.updateProcessor.Close()
 	}
@@ -227,10 +231,7 @@ func (client *LDClient) Close() {
 
 // Immediately flushes queued events.
 func (client *LDClient) Flush() {
-	if client.IsOffline() {
-		return
-	}
-	client.eventProcessor.flush()
+	client.eventProcessor.Flush()
 }
 
 // Returns a map from feature flag keys to values for
@@ -359,7 +360,7 @@ func (client *LDClient) sendFlagRequestEvent(key string, flag *FeatureFlag, user
 		return
 	}
 	evt := NewFeatureRequestEvent(key, flag, user, variation, value, defaultVal, nil)
-	client.eventProcessor.sendEvent(evt)
+	client.eventProcessor.SendEvent(evt)
 }
 
 func (client *LDClient) Evaluate(key string, user User, defaultVal interface{}) (interface{}, *int, error) {
@@ -404,10 +405,8 @@ func (client *LDClient) evaluateInternal(key string, user User, defaultVal inter
 	}
 
 	result, index, prereqEvents := client.evalFlag(*feature, user)
-	if !client.IsOffline() {
-		for _, event := range prereqEvents {
-			client.eventProcessor.sendEvent(event)
-		}
+	for _, event := range prereqEvents {
+		client.eventProcessor.SendEvent(event)
 	}
 	if result != nil {
 		return result, index, feature, nil

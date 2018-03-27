@@ -5,11 +5,10 @@ package ldclient
 // deliberately not thread-safe, because they should always be called from EventProcessor's
 // single event-processing goroutine.
 type eventSummarizer struct {
-	eventsState summaryEventsState
-	userKeys    lruCache
+	eventsState eventSummary
 }
 
-type summaryEventsState struct {
+type eventSummary struct {
 	counters  map[counterKey]*counterValue
 	startDate uint64
 	endDate   uint64
@@ -39,36 +38,14 @@ type flagCounterData struct {
 	Unknown *bool       `json:"unknown,omitempty"`
 }
 
-type summaryOutput struct {
-	StartDate uint64                     `json:"startDate"`
-	EndDate   uint64                     `json:"endDate"`
-	Features  map[string]flagSummaryData `json:"features"`
+func newEventSummarizer() *eventSummarizer {
+	return &eventSummarizer{eventsState: newEventSummary()}
 }
 
-func NewEventSummarizer(config Config) *eventSummarizer {
-	return &eventSummarizer{
-		eventsState: newSummaryEventsState(),
-		userKeys:    newLruCache(config.UserKeysCapacity),
-	}
-}
-
-func newSummaryEventsState() summaryEventsState {
-	return summaryEventsState{
+func newEventSummary() eventSummary {
+	return eventSummary{
 		counters: make(map[counterKey]*counterValue),
 	}
-}
-
-// Add to the set of users we've noticed, and return true if the user was already known to us.
-func (s *eventSummarizer) noticeUser(user *User) bool {
-	if user == nil || user.Key == nil {
-		return true
-	}
-	return s.userKeys.add(*user.Key)
-}
-
-// Clears the set of users we've noticed.
-func (s *eventSummarizer) resetUsers() {
-	s.userKeys.clear()
 }
 
 // Adds this event to our counters, if it is a type of event we need to count.
@@ -107,42 +84,8 @@ func (s *eventSummarizer) summarizeEvent(evt Event) {
 }
 
 // Returns a snapshot of the current summarized event data, and resets this state.
-func (s *eventSummarizer) snapshot() summaryEventsState {
+func (s *eventSummarizer) snapshot() eventSummary {
 	state := s.eventsState
-	s.eventsState = newSummaryEventsState()
+	s.eventsState = newEventSummary()
 	return state
-}
-
-// Transforms the summary data into the format used for event sending.
-func makeSummaryOutput(snapshot summaryEventsState) summaryOutput {
-	features := make(map[string]flagSummaryData)
-	for key, value := range snapshot.counters {
-		var flagData flagSummaryData
-		var known bool
-		if flagData, known = features[key.key]; !known {
-			flagData = flagSummaryData{
-				Default:  value.flagDefault,
-				Counters: make([]flagCounterData, 0, 2),
-			}
-		}
-		data := flagCounterData{
-			Value: value.flagValue,
-			Count: value.count,
-		}
-		if key.version == 0 {
-			unknown := true
-			data.Unknown = &unknown
-		} else {
-			version := key.version
-			data.Version = &version
-		}
-		flagData.Counters = append(flagData.Counters, data)
-		features[key.key] = flagData
-	}
-
-	return summaryOutput{
-		StartDate: snapshot.startDate,
-		EndDate:   snapshot.endDate,
-		Features:  features,
-	}
 }

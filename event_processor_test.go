@@ -39,6 +39,9 @@ var epDefaultUser = User{
 	Name: strPtr("Red"),
 }
 
+var userJson = map[string]interface{}{"key": "userKey", "name": "Red"}
+var filteredUserJson = map[string]interface{}{"key": "userKey", "privateAttrs": []interface{}{"name"}}
+
 const (
 	sdkKey = "SDK_KEY"
 )
@@ -58,10 +61,10 @@ func init() {
 
 func TestIdentifyEventIsQueued(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	ie := NewIdentifyEvent(epDefaultUser)
-	ep.sendEvent(ie)
+	ep.SendEvent(ie)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
@@ -71,7 +74,7 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 		"kind":         "identify",
 		"creationDate": float64(ie.CreationDate),
 		"key":          *epDefaultUser.Key,
-		"user":         epDefaultUser,
+		"user":         userJson,
 	})
 	assert.Equal(t, expected, ieo)
 }
@@ -80,10 +83,10 @@ func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
 	config := epDefaultConfig
 	config.AllAttributesPrivate = true
 	ep, st := createEventProcessor(config)
-	defer ep.close()
+	defer ep.Close()
 
 	ie := NewIdentifyEvent(epDefaultUser)
-	ep.sendEvent(ie)
+	ep.SendEvent(ie)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
@@ -93,17 +96,14 @@ func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
 		"kind":         "identify",
 		"creationDate": float64(ie.CreationDate),
 		"key":          "userKey",
-		"user": map[string]interface{}{
-			"key":          "userKey",
-			"privateAttrs": []interface{}{"name"},
-		},
+		"user":         filteredUserJson,
 	})
 	assert.Equal(t, expected, ieo)
 }
 
 func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	flag := FeatureFlag{
 		Key:     "flagkey",
@@ -112,19 +112,19 @@ func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
 	variation := 1
 	value := "value"
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
-	ep.sendEvent(fe)
+	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
-	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
+	assertIndexEventMatches(t, fe, userJson, output[0])
 
 	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
 }
 
 func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	flag := FeatureFlag{
 		Key:         "flagkey",
@@ -134,12 +134,38 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 	variation := 1
 	value := "value"
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
-	ep.sendEvent(fe)
+	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 3, len(output))
 
-	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
+	assertIndexEventMatches(t, fe, userJson, output[0])
+
+	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, false, output[1])
+
+	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+}
+
+func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
+	config := epDefaultConfig
+	config.AllAttributesPrivate = true
+	ep, st := createEventProcessor(config)
+	defer ep.Close()
+
+	flag := FeatureFlag{
+		Key:         "flagkey",
+		Version:     11,
+		TrackEvents: true,
+	}
+	variation := 1
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	ep.SendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 3, len(output))
+
+	assertIndexEventMatches(t, fe, filteredUserJson, output[0])
 
 	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, false, output[1])
 
@@ -150,7 +176,7 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 	config := epDefaultConfig
 	config.InlineUsersInEvents = true
 	ep, st := createEventProcessor(config)
-	defer ep.close()
+	defer ep.Close()
 
 	flag := FeatureFlag{
 		Key:         "flagkey",
@@ -160,7 +186,7 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 	variation := 1
 	value := "value"
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
-	ep.sendEvent(fe)
+	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
@@ -172,7 +198,7 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 
 func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	futureTime := now() + 1000000
 	flag := FeatureFlag{
@@ -184,12 +210,12 @@ func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	variation := 1
 	value := "value"
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
-	ep.sendEvent(fe)
+	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 3, len(output))
 
-	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
+	assertIndexEventMatches(t, fe, userJson, output[0])
 
 	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, true, false, output[1])
 
@@ -198,7 +224,7 @@ func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 
 func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	// Pick a server time that is somewhat behind the client time
 	serverTime := now() - 20000
@@ -206,8 +232,8 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 
 	// Send and flush an event we don't care about, just to set the last server time
 	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
-	ep.sendEvent(ie)
-	ep.flush()
+	ep.SendEvent(ie)
+	ep.Flush()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the server time, but in the past compared to the client.
@@ -219,12 +245,12 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 		DebugEventsUntilDate: &debugUntil,
 	}
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, nil, nil, nil, nil)
-	ep.sendEvent(fe)
+	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
-	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
+	assertIndexEventMatches(t, fe, userJson, output[0])
 
 	// should get a summary event only, not a full feature event
 	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
@@ -232,7 +258,7 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 
 func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	// Pick a server time that is somewhat ahead of the client time
 	serverTime := now() + 20000
@@ -240,8 +266,8 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 
 	// Send and flush an event we don't care about, just to set the last server time
 	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
-	ep.sendEvent(ie)
-	ep.flush()
+	ep.SendEvent(ie)
+	ep.Flush()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the client time, but in the past compared to the server.
@@ -253,12 +279,12 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 		DebugEventsUntilDate: &debugUntil,
 	}
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, nil, nil, nil, nil)
-	ep.sendEvent(fe)
+	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
-	assertIndexEventMatches(t, fe, epDefaultUser, output[0])
+	assertIndexEventMatches(t, fe, userJson, output[0])
 
 	// should get a summary event only, not a full feature event
 	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
@@ -266,7 +292,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 
 func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	flag1 := FeatureFlag{
 		Key:         "flagkey1",
@@ -282,13 +308,13 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 	value := "value"
 	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, &variation, value, nil, nil)
 	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
-	ep.sendEvent(fe1)
-	ep.sendEvent(fe2)
+	ep.SendEvent(fe1)
+	ep.SendEvent(fe2)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 4, len(output))
 
-	assertIndexEventMatches(t, fe1, epDefaultUser, output[0])
+	assertIndexEventMatches(t, fe1, userJson, output[0])
 
 	assertFeatureEventMatches(t, fe1, flag1, value, epDefaultUser, false, false, output[1])
 
@@ -300,7 +326,7 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 
 func TestNonTrackedEventsAreSummarized(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	flag1 := FeatureFlag{
 		Key:         "flagkey1",
@@ -317,14 +343,14 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, &variation, value, nil, nil)
 	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
 	fe3 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
-	ep.sendEvent(fe1)
-	ep.sendEvent(fe2)
-	ep.sendEvent(fe3)
+	ep.SendEvent(fe1)
+	ep.SendEvent(fe2)
+	ep.SendEvent(fe3)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
-	assertIndexEventMatches(t, fe1, epDefaultUser, output[0])
+	assertIndexEventMatches(t, fe1, userJson, output[0])
 
 	seo := output[1]
 	assertSummaryEventHasCounter(t, flag1, value, 1, seo)
@@ -335,18 +361,18 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 
 func TestCustomEventIsQueuedWithUser(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	data := map[string]interface{}{
 		"thing": "stuff",
 	}
 	ce := NewCustomEvent("eventkey", epDefaultUser, data)
-	ep.sendEvent(ce)
+	ep.SendEvent(ce)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
-	assertIndexEventMatches(t, ce, epDefaultUser, output[0])
+	assertIndexEventMatches(t, ce, userJson, output[0])
 
 	ceo := output[1]
 	expected := map[string]interface{}{
@@ -363,13 +389,13 @@ func TestCustomEventCanContainInlineUser(t *testing.T) {
 	config := epDefaultConfig
 	config.InlineUsersInEvents = true
 	ep, st := createEventProcessor(config)
-	defer ep.close()
+	defer ep.Close()
 
 	data := map[string]interface{}{
 		"thing": "stuff",
 	}
 	ce := NewCustomEvent("eventkey", epDefaultUser, data)
-	ep.sendEvent(ce)
+	ep.SendEvent(ce)
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
@@ -385,177 +411,50 @@ func TestCustomEventCanContainInlineUser(t *testing.T) {
 	assert.Equal(t, expected, ceo)
 }
 
-func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
-	config := epDefaultConfig
-	config.AllAttributesPrivate = true
-	ep, st := createEventProcessor(config)
-	defer ep.close()
-
-	ce := NewCustomEvent("eventkey", epDefaultUser, nil)
-	ep.sendEvent(ce)
-
-	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 2, len(output))
-
-	ieo := output[0]
-	expected := map[string]interface{}{
-		"kind":         "index",
-		"creationDate": float64(ce.CreationDate),
-		"user": map[string]interface{}{
-			"key":          "userKey",
-			"privateAttrs": []interface{}{"name"},
-		},
-	}
-	assert.Equal(t, expected, ieo)
-}
-
 func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
-	ep.flush()
+	defer ep.Close()
+	ep.Flush()
 
 	assert.Nil(t, st.messageSent)
 }
 
 func TestSdkKeyIsSent(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	ie := NewIdentifyEvent(epDefaultUser)
-	ep.sendEvent(ie)
+	ep.SendEvent(ie)
 
-	ep.flush()
+	ep.Flush()
 	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
 }
 
 func TestFlushReturnsHttpGeneralError(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	expectedErr := fmt.Errorf("problems")
 	st.error = expectedErr
 
 	ie := NewIdentifyEvent(epDefaultUser)
-	ep.sendEvent(ie)
+	ep.SendEvent(ie)
 
-	err := ep.flush()
+	err := ep.Flush()
 	assert.Equal(t, "Post /bulk: "+expectedErr.Error(), err.Error())
 }
 
 func TestFlushReturnsHttpResponseError(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.close()
+	defer ep.Close()
 
 	st.statusCode = 400
 
 	ie := NewIdentifyEvent(epDefaultUser)
-	ep.sendEvent(ie)
+	ep.SendEvent(ie)
 
-	err := ep.flush()
-	assert.NoError(t, err)
-}
-
-func TestScrubUser(t *testing.T) {
-	t.Run("private built-in attributes per user", func(t *testing.T) {
-		user := User{
-			Key:       strPtr("user-key"),
-			FirstName: strPtr("sam"),
-			LastName:  strPtr("smith"),
-			Name:      strPtr("sammy"),
-			Country:   strPtr("freedonia"),
-			Avatar:    strPtr("my-avatar"),
-			Ip:        strPtr("123.456.789"),
-			Email:     strPtr("me@example.com"),
-			Secondary: strPtr("abcdef"),
-		}
-
-		for _, attr := range BuiltinAttributes {
-			user.PrivateAttributeNames = []string{attr}
-			scrubbedUser := *scrubUser(user, false, nil)
-			assert.Equal(t, []string{attr}, scrubbedUser.PrivateAttributes)
-			scrubbedUser.PrivateAttributes = nil
-			assert.NotEqual(t, user, scrubbedUser)
-		}
-	})
-
-	t.Run("global private built-in attributes", func(t *testing.T) {
-		user := User{
-			Key:       strPtr("user-key"),
-			FirstName: strPtr("sam"),
-			LastName:  strPtr("smith"),
-			Name:      strPtr("sammy"),
-			Country:   strPtr("freedonia"),
-			Avatar:    strPtr("my-avatar"),
-			Ip:        strPtr("123.456.789"),
-			Email:     strPtr("me@example.com"),
-			Secondary: strPtr("abcdef"),
-		}
-
-		for _, attr := range BuiltinAttributes {
-			scrubbedUser := *scrubUser(user, false, []string{attr})
-			assert.Equal(t, []string{attr}, scrubbedUser.PrivateAttributes)
-			scrubbedUser.PrivateAttributes = nil
-			assert.NotEqual(t, user, scrubbedUser)
-		}
-	})
-
-	t.Run("private custom attribute", func(t *testing.T) {
-		userKey := "userKey"
-		user := User{
-			Key: &userKey,
-			PrivateAttributeNames: []string{"my-secret-attr"},
-			Custom: &map[string]interface{}{
-				"my-secret-attr": "my secret value",
-			}}
-
-		scrubbedUser := *scrubUser(user, false, nil)
-
-		assert.Equal(t, []string{"my-secret-attr"}, scrubbedUser.PrivateAttributes)
-		assert.NotContains(t, *scrubbedUser.Custom, "my-secret-attr")
-	})
-
-	t.Run("all attributes private", func(t *testing.T) {
-		userKey := "userKey"
-		user := User{
-			Key:       &userKey,
-			FirstName: strPtr("sam"),
-			LastName:  strPtr("smith"),
-			Name:      strPtr("sammy"),
-			Country:   strPtr("freedonia"),
-			Avatar:    strPtr("my-avatar"),
-			Ip:        strPtr("123.456.789"),
-			Email:     strPtr("me@example.com"),
-			Secondary: strPtr("abcdef"),
-			Custom: &map[string]interface{}{
-				"my-secret-attr": "my secret value",
-			}}
-
-		scrubbedUser := *scrubUser(user, true, nil)
-		sort.Strings(scrubbedUser.PrivateAttributes)
-		expectedAttributes := append(BuiltinAttributes, "my-secret-attr")
-		sort.Strings(expectedAttributes)
-		assert.Equal(t, expectedAttributes, scrubbedUser.PrivateAttributes)
-
-		scrubbedUser.PrivateAttributes = nil
-		assert.Equal(t, User{Key: &userKey, Custom: &map[string]interface{}{}}, scrubbedUser)
-		assert.NotContains(t, *scrubbedUser.Custom, "my-secret-attr")
-		assert.Nil(t, scrubbedUser.Name)
-	})
-
-	t.Run("anonymous attribute can't be private", func(t *testing.T) {
-		userKey := "userKey"
-		anon := true
-		user := User{
-			Key:       &userKey,
-			Anonymous: &anon}
-
-		scrubbedUser := *scrubUser(user, true, nil)
-		assert.Equal(t, scrubbedUser, user)
-	})
-}
-
-func strPtr(s string) *string {
-	return &s
+	err := ep.Flush()
+	assert.Equal(t, "Unexpected response code: 400 when accessing URL: /bulk", err.Error())
 }
 
 func jsonMap(o interface{}) map[string]interface{} {
@@ -565,11 +464,11 @@ func jsonMap(o interface{}) map[string]interface{} {
 	return result
 }
 
-func assertIndexEventMatches(t *testing.T, sourceEvent Event, user User, output map[string]interface{}) {
+func assertIndexEventMatches(t *testing.T, sourceEvent Event, encodedUser map[string]interface{}, output map[string]interface{}) {
 	expected := map[string]interface{}{
 		"kind":         "index",
 		"creationDate": float64(sourceEvent.GetBase().CreationDate),
-		"user":         jsonMap(user),
+		"user":         encodedUser,
 	}
 	assert.Equal(t, expected, output)
 }
@@ -615,18 +514,18 @@ func assertSummaryEventHasCounter(t *testing.T, flag FeatureFlag, value interfac
 	assert.Contains(t, f["counters"], expected)
 }
 
-func createEventProcessor(config Config) (*eventProcessor, *stubTransport) {
+func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport) {
 	transport := &stubTransport{
 		statusCode: 200,
 	}
 	client := &http.Client{
 		Transport: transport,
 	}
-	return newEventProcessor(sdkKey, config, client), transport
+	return newDefaultEventProcessor(sdkKey, config, client), transport
 }
 
-func flushAndGetEvents(ep *eventProcessor, st *stubTransport) (output []map[string]interface{}) {
-	ep.flush()
+func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) (output []map[string]interface{}) {
+	ep.Flush()
 	if st.messageSent == nil || st.messageSent.Body == nil {
 		return
 	}
@@ -646,6 +545,7 @@ func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	resp := http.Response{
 		StatusCode: t.statusCode,
 		Header:     make(http.Header),
+		Request:    request,
 	}
 	if t.serverTime != 0 {
 		ts := epoch.Add(time.Duration(t.serverTime) * time.Millisecond)
