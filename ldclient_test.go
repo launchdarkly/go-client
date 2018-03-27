@@ -171,8 +171,7 @@ func TestEvaluatingExistingFlagSendsEvent(t *testing.T) {
 	assert.Equal(t, flag.Key, e.Key)
 	assert.Equal(t, &flag.Version, e.Version)
 	assert.Equal(t, "b", e.Value)
-	variation := 1
-	assert.Equal(t, &variation, e.Variation)
+	assert.Equal(t, intPtr(1), e.Variation)
 	assert.Equal(t, "x", e.Default)
 	assert.Nil(t, e.PrereqOf)
 }
@@ -222,8 +221,7 @@ func TestEvaluatingFlagWithPrerequisiteSendsPrerequisiteEvent(t *testing.T) {
 	assert.Equal(t, flag1.Key, e0.Key)
 	assert.Equal(t, &flag1.Version, e0.Version)
 	assert.Equal(t, "d", e0.Value)
-	variation := 1
-	assert.Equal(t, &variation, e0.Variation)
+	assert.Equal(t, intPtr(1), e0.Variation)
 	assert.Nil(t, e0.Default)
 	assert.Equal(t, &flag0.Key, e0.PrereqOf)
 
@@ -232,7 +230,7 @@ func TestEvaluatingFlagWithPrerequisiteSendsPrerequisiteEvent(t *testing.T) {
 	assert.Equal(t, flag0.Key, e1.Key)
 	assert.Equal(t, &flag0.Version, e1.Version)
 	assert.Equal(t, "b", e1.Value)
-	assert.Equal(t, &variation, e1.Variation)
+	assert.Equal(t, intPtr(1), e1.Variation)
 	assert.Equal(t, "x", e1.Default)
 	assert.Nil(t, e1.PrereqOf)
 }
