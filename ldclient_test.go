@@ -167,13 +167,19 @@ func TestEvaluatingExistingFlagSendsEvent(t *testing.T) {
 
 	assert.Equal(t, 1, len(events))
 	e := events[0].(FeatureRequestEvent)
-	assert.Equal(t, user, e.User)
-	assert.Equal(t, flag.Key, e.Key)
-	assert.Equal(t, &flag.Version, e.Version)
-	assert.Equal(t, "b", e.Value)
-	assert.Equal(t, intPtr(1), e.Variation)
-	assert.Equal(t, "x", e.Default)
-	assert.Nil(t, e.PrereqOf)
+	expectedEvent := FeatureRequestEvent{
+		BaseEvent: BaseEvent{
+			CreationDate: e.CreationDate,
+			User:         user,
+		},
+		Key:       flag.Key,
+		Version:   &flag.Version,
+		Value:     "b",
+		Variation: intPtr(1),
+		Default:   "x",
+		PrereqOf:  nil,
+	}
+	assert.Equal(t, expectedEvent, e)
 }
 
 func TestEvaluatingUnknownFlagSendsEvent(t *testing.T) {
@@ -188,13 +194,19 @@ func TestEvaluatingUnknownFlagSendsEvent(t *testing.T) {
 	assert.Equal(t, 1, len(events))
 
 	e := events[0].(FeatureRequestEvent)
-	assert.Equal(t, user, e.User)
-	assert.Equal(t, "flagKey", e.Key)
-	assert.Nil(t, e.Version)
-	assert.Equal(t, "x", e.Value)
-	assert.Nil(t, e.Variation)
-	assert.Equal(t, "x", e.Default)
-	assert.Nil(t, e.PrereqOf)
+	expectedEvent := FeatureRequestEvent{
+		BaseEvent: BaseEvent{
+			CreationDate: e.CreationDate,
+			User:         user,
+		},
+		Key:       "flagKey",
+		Version:   nil,
+		Value:     "x",
+		Variation: nil,
+		Default:   "x",
+		PrereqOf:  nil,
+	}
+	assert.Equal(t, expectedEvent, e)
 }
 
 func TestEvaluatingFlagWithPrerequisiteSendsPrerequisiteEvent(t *testing.T) {
@@ -217,22 +229,34 @@ func TestEvaluatingFlagWithPrerequisiteSendsPrerequisiteEvent(t *testing.T) {
 	assert.Equal(t, 2, len(events))
 
 	e0 := events[0].(FeatureRequestEvent)
-	assert.Equal(t, user, e0.User)
-	assert.Equal(t, flag1.Key, e0.Key)
-	assert.Equal(t, &flag1.Version, e0.Version)
-	assert.Equal(t, "d", e0.Value)
-	assert.Equal(t, intPtr(1), e0.Variation)
-	assert.Nil(t, e0.Default)
-	assert.Equal(t, &flag0.Key, e0.PrereqOf)
+	expected0 := FeatureRequestEvent{
+		BaseEvent: BaseEvent{
+			CreationDate: e0.CreationDate,
+			User:         user,
+		},
+		Key:       flag1.Key,
+		Version:   &flag1.Version,
+		Value:     "d",
+		Variation: intPtr(1),
+		Default:   nil,
+		PrereqOf:  &flag0.Key,
+	}
+	assert.Equal(t, expected0, e0)
 
 	e1 := events[1].(FeatureRequestEvent)
-	assert.Equal(t, user, e1.User)
-	assert.Equal(t, flag0.Key, e1.Key)
-	assert.Equal(t, &flag0.Version, e1.Version)
-	assert.Equal(t, "b", e1.Value)
-	assert.Equal(t, intPtr(1), e1.Variation)
-	assert.Equal(t, "x", e1.Default)
-	assert.Nil(t, e1.PrereqOf)
+	expected1 := FeatureRequestEvent{
+		BaseEvent: BaseEvent{
+			CreationDate: e1.CreationDate,
+			User:         user,
+		},
+		Key:       flag0.Key,
+		Version:   &flag0.Version,
+		Value:     "b",
+		Variation: intPtr(1),
+		Default:   "x",
+		PrereqOf:  nil,
+	}
+	assert.Equal(t, expected1, e1)
 }
 
 func TestIdentifySendsIdentifyEvent(t *testing.T) {
