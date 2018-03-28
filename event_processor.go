@@ -380,7 +380,7 @@ func (t *eventPayloadSendTask) flushInternal() error {
 
 	req.Header.Add("Authorization", t.consumer.sdkKey)
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("User-Agent", "GoClient/"+Version)
+	req.Header.Add("User-Agent", t.consumer.config.UserAgent)
 
 	resp, respErr := t.consumer.client.Do(req)
 

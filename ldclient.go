@@ -64,6 +64,7 @@ type Config struct {
 	UserKeysFlushInterval time.Duration
 	// Set to true if you need to see the full user details in every analytics event.
 	InlineUsersInEvents bool
+	UserAgent           string
 }
 
 // The minimum value for Config.PollInterval. If you specify a smaller interval,
@@ -97,6 +98,7 @@ var DefaultConfig = Config{
 	Offline:               false,
 	UserKeysCapacity:      1000,
 	UserKeysFlushInterval: 5 * time.Minute,
+	UserAgent:             "",
 }
 
 var ErrInitializationTimeout = errors.New("Timeout encountered waiting for LaunchDarkly client initialization")
@@ -119,6 +121,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 	if config.PollInterval < MinimumPollInterval {
 		config.PollInterval = MinimumPollInterval
 	}
+	config.UserAgent = strings.TrimSpace("GoClient/" + Version + " " + config.UserAgent)
 
 	if config.FeatureStore == nil {
 		config.FeatureStore = NewInMemoryFeatureStore(config.Logger)
