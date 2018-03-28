@@ -11,49 +11,63 @@ import (
 )
 
 type EventProcessor interface {
-	// Sends an event asynchronously.
+	// Records an event asynchronously.
 	SendEvent(Event)
-	// Delivers all buffered events now and waits until they have been sent.
-	Flush() error
-	// Flushes and then shuts down all event processor activity. Subsequent events will be discarded.
+	// Specifies that any buffered events should be sent as soon as possible, rather than waiting
+	// for the next flush interval. This method is asynchronous, so events still may not be sent
+	// until a later time.
+	Flush()
+	// Shuts down all event processor activity, after first ensuring that all events have been
+	// delivered. Subsequent calls to SendEvent() or Flush() will be ignored.
 	Close()
 }
 
 type nullEventProcessor struct{}
 
 type defaultEventProcessor struct {
-	eventsIn chan eventInput
-	consumer *eventConsumer
+	inputCh   chan eventConsumerMessage
+	consumer  *eventConsumer
+	closeOnce sync.Once
 }
 
 type eventConsumer struct {
 	sdkKey            string
 	config            Config
 	client            *http.Client
-	eventsIn          chan eventInput
-	queue             []interface{}
+	inputCh           chan eventConsumerMessage
+	events            []interface{}
 	summarizer        *eventSummarizer
 	userKeys          lruCache
 	lastKnownPastTime uint64
 	capacityExceeded  bool
+	workersCh         chan struct{}
+	workersGroup      sync.WaitGroup
 	responseCh        chan *http.Response
-	closer            chan struct{}
-	closeOnce         sync.Once
 	disabled          bool
+	closer            chan struct{}
 }
 
 type eventPayloadSendTask struct {
 	consumer *eventConsumer
 	events   []interface{}
 	summary  eventSummary
-	replyCh  chan error
 }
 
-// Payload of the eventsIn channel. If event is nil, this is a flush request. The reply
-// channel is non-nil if the caller has requested a reply (for flushes only).
-type eventInput struct {
+// Payload of the inputCh channel.
+type eventConsumerMessage interface{}
+
+type sendEventMessage struct {
 	event Event
-	reply chan error
+}
+
+type flushEventsMessage struct{}
+
+type shutdownEventsMessage struct {
+	replyCh chan struct{}
+}
+
+type syncEventsMessage struct {
+	replyCh chan struct{}
 }
 
 // Serializable form of a feature request event. This differs from the event that was
@@ -113,40 +127,38 @@ const (
 	IDENTIFY_EVENT        = "identify"
 	INDEX_EVENT           = "index"
 	SUMMARY_EVENT         = "summary"
+	maxFlushWorkers       = 5
 )
 
 func newNullEventProcessor() *nullEventProcessor {
 	return &nullEventProcessor{}
 }
 
-func (n *nullEventProcessor) SendEvent(e Event) {
-}
+func (n *nullEventProcessor) SendEvent(e Event) {}
 
-func (n *nullEventProcessor) Flush() error {
-	return nil
-}
+func (n *nullEventProcessor) Flush() {}
 
-func (n *nullEventProcessor) Close() {
-}
+func (n *nullEventProcessor) Close() {}
 
 func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
 	if client == nil {
 		client = &http.Client{}
 	}
-	eventsIn := make(chan eventInput, 100)
+	inputCh := make(chan eventConsumerMessage, config.Capacity)
 	consumer := &eventConsumer{
 		sdkKey:     sdkKey,
 		config:     config,
-		eventsIn:   eventsIn,
-		queue:      make([]interface{}, 0),
+		inputCh:    inputCh,
+		events:     make([]interface{}, 0),
 		client:     client,
 		responseCh: make(chan *http.Response),
-		closer:     make(chan struct{}),
+		workersCh:  make(chan struct{}, maxFlushWorkers),
 		summarizer: newEventSummarizer(),
 		userKeys:   newLruCache(config.UserKeysCapacity),
+		closer:     make(chan struct{}),
 	}
 	res := &defaultEventProcessor{
-		eventsIn: eventsIn,
+		inputCh:  inputCh,
 		consumer: consumer,
 	}
 	consumer.start()
@@ -154,24 +166,27 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 }
 
 func (ep *defaultEventProcessor) SendEvent(e Event) {
-	ep.eventsIn <- eventInput{
-		event: e,
-		reply: nil,
-	}
+	ep.inputCh <- sendEventMessage{event: e}
 }
 
-func (ep *defaultEventProcessor) Flush() error {
-	input := eventInput{
-		event: nil,
-		reply: make(chan error),
-	}
-	ep.eventsIn <- input
-	err := <-input.reply
-	return err
+func (ep *defaultEventProcessor) Flush() {
+	ep.inputCh <- flushEventsMessage{}
 }
 
 func (ep *defaultEventProcessor) Close() {
-	ep.consumer.close()
+	ep.closeOnce.Do(func() {
+		m := shutdownEventsMessage{replyCh: make(chan struct{})}
+		ep.inputCh <- m
+		<-m.replyCh
+	})
+}
+
+// used only for testing - ensures that all pending messages and flushes have completed
+func (ep *defaultEventProcessor) waitUntilInactive() {
+	m := syncEventsMessage{replyCh: make(chan struct{})}
+	ep.inputCh <- m
+	<-m.replyCh
+	ep.consumer.workersGroup.Wait()
 }
 
 func (ec *eventConsumer) start() {
@@ -192,38 +207,42 @@ func (ec *eventConsumer) start() {
 		usersResetTicker := time.NewTicker(userKeysFlushInterval)
 		for {
 			select {
-			case eventIn := <-ec.eventsIn:
-				if eventIn.event == nil {
-					ec.dispatchFlush(eventIn.reply)
-				} else {
-					ec.sendEventInternal(eventIn.event)
+			case message := <-ec.inputCh:
+				switch m := message.(type) {
+				case sendEventMessage:
+					ec.processEvent(m.event)
+				case flushEventsMessage:
+					ec.startFlush()
+				case syncEventsMessage:
+					m.replyCh <- struct{}{}
+				case shutdownEventsMessage:
+					flushTicker.Stop()
+					usersResetTicker.Stop()
+					go ec.doShutdown(m)
 				}
 			case <-flushTicker.C:
-				ec.dispatchFlush(nil)
+				ec.startFlush()
 			case <-usersResetTicker.C:
 				ec.userKeys.clear()
 			case resp := <-ec.responseCh:
 				ec.handleResponse(resp)
 			case <-ec.closer:
-				flushTicker.Stop()
-				usersResetTicker.Stop()
-				waitCh := make(chan error)
-				ec.dispatchFlush(waitCh)
-				<-waitCh
-				ec.disabled = true
 				return
 			}
 		}
 	}()
 }
 
-func (ec *eventConsumer) close() {
-	ec.closeOnce.Do(func() {
-		close(ec.closer)
-	})
+func (ec *eventConsumer) doShutdown(message shutdownEventsMessage) {
+	// At this point we have already processed all the messages we're going to process;
+	// just trigger one last flush, and then wait for all pending flushes to complete.
+	ec.startFlush()
+	ec.workersGroup.Wait()
+	close(ec.closer)
+	message.replyCh <- struct{}{}
 }
 
-func (ec *eventConsumer) sendEventInternal(evt Event) {
+func (ec *eventConsumer) processEvent(evt Event) {
 	if ec.disabled {
 		return
 	}
@@ -288,37 +307,41 @@ func (ec *eventConsumer) shouldTrackFullEvent(evt Event) bool {
 }
 
 func (ec *eventConsumer) queueEvent(event interface{}) {
-	if len(ec.queue) >= ec.config.Capacity {
+	if len(ec.events) >= ec.config.Capacity {
 		if !ec.capacityExceeded {
 			ec.capacityExceeded = true
 			ec.config.Logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
 		}
 	} else {
 		ec.capacityExceeded = false
-		ec.queue = append(ec.queue, event)
+		ec.events = append(ec.events, event)
 	}
 }
 
-func (ec *eventConsumer) dispatchFlush(replyCh chan error) {
+func (ec *eventConsumer) startFlush() {
 	if ec.disabled {
 		return
 	}
-	events := ec.queue
+	events := ec.events
 	summary := ec.summarizer.snapshot()
-	ec.queue = make([]interface{}, 0)
+	ec.events = make([]interface{}, 0)
 
-	if len(events) == 0 && len(summary.counters) == 0 {
-		if replyCh != nil {
-			replyCh <- nil
-		}
-	} else {
+	if len(events) > 0 || len(summary.counters) > 0 {
+		// Adding to this channel will block if we already have too many active workers
+		ec.workersCh <- struct{}{}
+		// Increment the group count so we know we have work in progress
+		ec.workersGroup.Add(1)
 		task := eventPayloadSendTask{
 			consumer: ec,
 			events:   events,
 			summary:  summary,
-			replyCh:  replyCh,
 		}
-		task.start()
+		go func() {
+			task.doSend()
+			// Decrement the active worker count
+			<-ec.workersCh
+			ec.workersGroup.Done()
+		}()
 	}
 }
 
@@ -341,16 +364,7 @@ func (ec *eventConsumer) handleResponse(resp *http.Response) {
 	}
 }
 
-func (t *eventPayloadSendTask) start() {
-	go func() {
-		err := t.flushInternal()
-		if t.replyCh != nil {
-			t.replyCh <- err
-		}
-	}()
-}
-
-func (t *eventPayloadSendTask) flushInternal() error {
+func (t *eventPayloadSendTask) doSend() {
 	outputEvents := make([]interface{}, 0, len(t.events)+1) // leave room for summary, if any
 	userFilter := newUserFilter(t.consumer.config)
 	for _, e := range t.events {
@@ -367,7 +381,7 @@ func (t *eventPayloadSendTask) flushInternal() error {
 
 	if marshalErr != nil {
 		t.consumer.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
-		return marshalErr
+		return
 	}
 
 	eventsUri := t.consumer.config.EventsUri + "/bulk"
@@ -375,7 +389,7 @@ func (t *eventPayloadSendTask) flushInternal() error {
 
 	if reqErr != nil {
 		t.consumer.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
-		return reqErr
+		return
 	}
 
 	req.Header.Add("Authorization", t.consumer.sdkKey)
@@ -393,11 +407,9 @@ func (t *eventPayloadSendTask) flushInternal() error {
 
 	if respErr != nil {
 		t.consumer.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
-		return respErr
+		return
 	}
 	t.consumer.responseCh <- resp
-	err := checkStatusCode(resp.StatusCode, eventsUri)
-	return err
 }
 
 func (t *eventPayloadSendTask) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {

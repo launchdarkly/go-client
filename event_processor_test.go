@@ -2,7 +2,6 @@ package ldclient
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -66,7 +65,7 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 	ie := NewIdentifyEvent(epDefaultUser)
 	ep.SendEvent(ie)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
 
 	ieo := output[0]
@@ -88,7 +87,7 @@ func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
 	ie := NewIdentifyEvent(epDefaultUser)
 	ep.SendEvent(ie)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
 
 	ieo := output[0]
@@ -114,7 +113,7 @@ func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
 	ep.SendEvent(fe)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
@@ -136,7 +135,7 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
 	ep.SendEvent(fe)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 3, len(output))
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
@@ -162,7 +161,7 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
 	ep.SendEvent(fe)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 3, len(output))
 
 	assertIndexEventMatches(t, fe, filteredUserJson, output[0])
@@ -188,7 +187,7 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
 	ep.SendEvent(fe)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
 	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, true, output[0])
@@ -212,7 +211,7 @@ func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
 	ep.SendEvent(fe)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 3, len(output))
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
@@ -234,6 +233,7 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
 	ep.SendEvent(ie)
 	ep.Flush()
+	ep.waitUntilInactive()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the server time, but in the past compared to the client.
@@ -247,7 +247,7 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, nil, nil, nil, nil)
 	ep.SendEvent(fe)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
@@ -268,6 +268,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
 	ep.SendEvent(ie)
 	ep.Flush()
+	ep.waitUntilInactive()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the client time, but in the past compared to the server.
@@ -281,7 +282,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, nil, nil, nil, nil)
 	ep.SendEvent(fe)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
@@ -311,7 +312,7 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 	ep.SendEvent(fe1)
 	ep.SendEvent(fe2)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 4, len(output))
 
 	assertIndexEventMatches(t, fe1, userJson, output[0])
@@ -347,7 +348,7 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 	ep.SendEvent(fe2)
 	ep.SendEvent(fe3)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
 	assertIndexEventMatches(t, fe1, userJson, output[0])
@@ -369,7 +370,7 @@ func TestCustomEventIsQueuedWithUser(t *testing.T) {
 	ce := NewCustomEvent("eventkey", epDefaultUser, data)
 	ep.SendEvent(ce)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
 	assertIndexEventMatches(t, ce, userJson, output[0])
@@ -397,7 +398,7 @@ func TestCustomEventCanContainInlineUser(t *testing.T) {
 	ce := NewCustomEvent("eventkey", epDefaultUser, data)
 	ep.SendEvent(ce)
 
-	output := flushAndGetEvents(ep, st)
+	output := closeAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
 
 	ceo := output[0]
@@ -413,8 +414,7 @@ func TestCustomEventCanContainInlineUser(t *testing.T) {
 
 func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.Close()
-	ep.Flush()
+	ep.Close()
 
 	assert.Nil(t, st.messageSent)
 }
@@ -426,35 +426,8 @@ func TestSdkKeyIsSent(t *testing.T) {
 	ie := NewIdentifyEvent(epDefaultUser)
 	ep.SendEvent(ie)
 
-	ep.Flush()
+	ep.Close()
 	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
-}
-
-func TestFlushReturnsHttpGeneralError(t *testing.T) {
-	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.Close()
-
-	expectedErr := fmt.Errorf("problems")
-	st.error = expectedErr
-
-	ie := NewIdentifyEvent(epDefaultUser)
-	ep.SendEvent(ie)
-
-	err := ep.Flush()
-	assert.Equal(t, "Post /bulk: "+expectedErr.Error(), err.Error())
-}
-
-func TestFlushReturnsHttpResponseError(t *testing.T) {
-	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.Close()
-
-	st.statusCode = 400
-
-	ie := NewIdentifyEvent(epDefaultUser)
-	ep.SendEvent(ie)
-
-	err := ep.Flush()
-	assert.Equal(t, "Unexpected response code: 400 when accessing URL: /bulk", err.Error())
 }
 
 func jsonMap(o interface{}) map[string]interface{} {
@@ -524,8 +497,8 @@ func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport
 	return newDefaultEventProcessor(sdkKey, config, client), transport
 }
 
-func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) (output []map[string]interface{}) {
-	ep.Flush()
+func closeAndGetEvents(ep *defaultEventProcessor, st *stubTransport) (output []map[string]interface{}) {
+	ep.Close()
 	if st.messageSent == nil || st.messageSent.Body == nil {
 		return
 	}
