@@ -396,6 +396,19 @@ func TestCustomEventCanContainInlineUser(t *testing.T) {
 	assert.Equal(t, expected, ceo)
 }
 
+func TestClosingEventProcessorForcesSynchronousFlush(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.Close()
+
+	ie := NewIdentifyEvent(epDefaultUser)
+	ep.SendEvent(ie)
+	ep.Close()
+
+	output := getEventsFromLastRequest(st)
+	assert.Equal(t, 1, len(output))
+	assertIdentifyEventMatches(t, ie, userJson, output[0])
+}
+
 func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	ep.Close()
