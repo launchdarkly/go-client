@@ -411,7 +411,10 @@ func TestClosingEventProcessorForcesSynchronousFlush(t *testing.T) {
 
 func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
-	ep.Close()
+	defer ep.Close()
+
+	ep.Flush()
+	ep.waitUntilInactive()
 
 	assert.Nil(t, st.messageSent)
 }
@@ -422,10 +425,24 @@ func TestSdkKeyIsSent(t *testing.T) {
 
 	ie := NewIdentifyEvent(epDefaultUser)
 	ep.SendEvent(ie)
-
 	ep.Flush()
 	ep.waitUntilInactive()
+
 	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
+}
+
+func TestUserAgentIsSent(t *testing.T) {
+	config := epDefaultConfig
+	config.UserAgent = "SecretAgent"
+	ep, st := createEventProcessor(config)
+	defer ep.Close()
+
+	ie := NewIdentifyEvent(epDefaultUser)
+	ep.SendEvent(ie)
+	ep.Flush()
+	ep.waitUntilInactive()
+
+	assert.Equal(t, config.UserAgent, st.messageSent.Header.Get("User-Agent"))
 }
 
 func jsonMap(o interface{}) map[string]interface{} {
