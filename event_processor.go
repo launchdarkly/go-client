@@ -175,6 +175,7 @@ func (ep *defaultEventProcessor) Flush() {
 
 func (ep *defaultEventProcessor) Close() {
 	ep.closeOnce.Do(func() {
+		ep.inputCh <- flushEventsMessage{}
 		m := shutdownEventsMessage{replyCh: make(chan struct{})}
 		ep.inputCh <- m
 		<-m.replyCh
@@ -235,8 +236,7 @@ func (ec *eventConsumer) start() {
 
 func (ec *eventConsumer) doShutdown(message shutdownEventsMessage) {
 	// At this point we have already processed all the messages we're going to process;
-	// just trigger one last flush, and then wait for all pending flushes to complete.
-	ec.startFlush()
+	// just wait for all pending flushes to complete.
 	ec.workersGroup.Wait()
 	close(ec.closer)
 	message.replyCh <- struct{}{}
