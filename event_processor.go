@@ -52,12 +52,6 @@ type flushPayload struct {
 	summary eventSummary
 }
 
-type eventPayloadSendTask struct {
-	consumer *eventConsumer
-	events   []interface{}
-	summary  eventSummary
-}
-
 // Payload of the inputCh channel.
 type eventConsumerMessage interface{}
 
