@@ -41,8 +41,7 @@ type eventConsumer struct {
 	userKeys          lruCache
 	lastKnownPastTime uint64
 	capacityExceeded  bool
-	flushTriggerCh    chan struct{}
-	requestPayloadCh  chan chan *flushPayload
+	flushCh           chan *flushPayload
 	workersGroup      sync.WaitGroup
 	disabled          int32 // Really a bool, but there's no atomic bool
 }
@@ -145,15 +144,14 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 	}
 	inputCh := make(chan eventConsumerMessage, config.Capacity)
 	consumer := &eventConsumer{
-		sdkKey:           sdkKey,
-		config:           config,
-		inputCh:          inputCh,
-		events:           make([]interface{}, 0),
-		client:           client,
-		flushTriggerCh:   make(chan struct{}, 1),
-		requestPayloadCh: make(chan chan *flushPayload, 1),
-		summarizer:       newEventSummarizer(),
-		userKeys:         newLruCache(config.UserKeysCapacity),
+		sdkKey:     sdkKey,
+		config:     config,
+		inputCh:    inputCh,
+		events:     make([]interface{}, 0),
+		client:     client,
+		flushCh:    make(chan *flushPayload, 1),
+		summarizer: newEventSummarizer(),
+		userKeys:   newLruCache(config.UserKeysCapacity),
 	}
 	res := &defaultEventProcessor{
 		inputCh:  inputCh,
@@ -213,8 +211,6 @@ func (ec *eventConsumer) runMainLoop() {
 	flushTicker := time.NewTicker(flushInterval)
 	usersResetTicker := time.NewTicker(userKeysFlushInterval)
 
-	closer := make(chan struct{})
-
 	for {
 		select {
 		case message := <-ec.inputCh:
@@ -228,40 +224,26 @@ func (ec *eventConsumer) runMainLoop() {
 			case shutdownEventsMessage:
 				flushTicker.Stop()
 				usersResetTicker.Stop()
-				go ec.doShutdown(m, closer)
+				ec.workersGroup.Wait() // Wait for all in-progress flushes to complete
+				close(ec.flushCh)      // Causes all idle flush workers to terminate
+				m.replyCh <- struct{}{}
+				return
 			}
-		case requestCh := <-ec.requestPayloadCh:
-			requestCh <- ec.getNextPayload()
 		case <-flushTicker.C:
 			ec.triggerFlush()
 		case <-usersResetTicker.C:
 			ec.userKeys.clear()
-		case <-closer:
-			return
 		}
 	}
 }
 
-// This is done on a separate goroutine so that the main loop can still respond to
-// flush payload requests while we're shutting down.
-func (ec *eventConsumer) doShutdown(message shutdownEventsMessage, closer chan struct{}) {
-	ec.workersGroup.Wait()   // Wait for all in-progress flushes to complete
-	close(ec.flushTriggerCh) // Causes all idle flush workers to terminate
-	message.replyCh <- struct{}{}
-	close(closer) // Now it's finally safe to end the main loop
-}
-
 func (ec *eventConsumer) runFlushWorker(n int) {
 	for {
-		_, more := <-ec.flushTriggerCh
+		payload, more := <-ec.flushCh
 		if !more {
 			// Channel has been closed - we're shutting down
 			break
 		}
-		// Ask the main loop to give us some events
-		payloadCh := make(chan *flushPayload)
-		ec.requestPayloadCh <- payloadCh
-		payload := <-payloadCh
 		ec.doFlush(payload)
 		ec.workersGroup.Done() // Decrement the count of in-progress flushes
 	}
@@ -354,29 +336,27 @@ func (ec *eventConsumer) triggerFlush() {
 		return
 	}
 	// Is there anything to flush?
-	if len(ec.events) == 0 && len(ec.summarizer.snapshot().counters) == 0 {
+	summary := ec.summarizer.snapshot()
+	if len(ec.events) == 0 && len(summary.counters) == 0 {
 		return
+	}
+	payload := flushPayload{
+		events:  ec.events,
+		summary: summary,
 	}
 	ec.workersGroup.Add(1) // Increment the count of active flushes
 	select {
-	case ec.flushTriggerCh <- struct{}{}:
-		// If the channel wasn't full, then there is a worker available and it will be
-		// calling us back shortly through requestPayloadCh.
+	case ec.flushCh <- &payload:
+		// If the channel wasn't full, then there is a worker available who will pick up
+		// this flush payload and send it. The event buffer and summary state can now be
+		// cleared from the main goroutine.
+		ec.events = make([]interface{}, 0)
+		ec.summarizer.reset()
 	default:
 		// We can't start a flush right now because we're waiting for one of the workers
-		// to pick up a previous flush trigger.  That's fine, it still means that someone
-		// will be flushing as soon as they can.
+		// to pick up the last one.  Do not reset the event buffer or summary state.
 		ec.workersGroup.Done()
 	}
-}
-
-// Get the current event buffer and summary state, to be given to one of the flush workers.
-func (ec *eventConsumer) getNextPayload() *flushPayload {
-	events := ec.events
-	summary := ec.summarizer.snapshot()
-	ec.events = make([]interface{}, 0)
-	ec.summarizer.reset()
-	return &flushPayload{events, summary}
 }
 
 // Runs on a flush worker thread
