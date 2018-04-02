@@ -83,9 +83,11 @@ func (s *eventSummarizer) summarizeEvent(evt Event) {
 	}
 }
 
-// Returns a snapshot of the current summarized event data, and resets this state.
+// Returns a snapshot of the current summarized event data.
 func (s *eventSummarizer) snapshot() eventSummary {
-	state := s.eventsState
+	return s.eventsState
+}
+
+func (s *eventSummarizer) reset() {
 	s.eventsState = newEventSummary()
-	return state
 }
