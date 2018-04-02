@@ -26,9 +26,8 @@ type EventProcessor interface {
 type nullEventProcessor struct{}
 
 type defaultEventProcessor struct {
-	inputCh    chan eventDispatcherMessage
-	dispatcher *eventDispatcher
-	closeOnce  sync.Once
+	inputCh   chan eventDispatcherMessage
+	closeOnce sync.Once
 }
 
 type eventDispatcher struct {
@@ -154,10 +153,9 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 		client = &http.Client{}
 	}
 	inputCh := make(chan eventDispatcherMessage, config.Capacity)
-	dispatcher := startEventDispatcher(sdkKey, config, client, inputCh)
+	startEventDispatcher(sdkKey, config, client, inputCh)
 	return &defaultEventProcessor{
-		inputCh:    inputCh,
-		dispatcher: dispatcher,
+		inputCh: inputCh,
 	}
 }
 
@@ -186,7 +184,7 @@ func (ep *defaultEventProcessor) waitUntilInactive() {
 }
 
 func startEventDispatcher(sdkKey string, config Config, client *http.Client,
-	inputCh chan eventDispatcherMessage) *eventDispatcher {
+	inputCh chan eventDispatcherMessage) {
 	ed := &eventDispatcher{
 		sdkKey: sdkKey,
 		config: config,
@@ -201,8 +199,6 @@ func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 			func(r *http.Response) { ed.handleResponse(r) })
 	}
 	go ed.runMainLoop(inputCh, flushCh, &workersGroup)
-
-	return ed
 }
 
 func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
