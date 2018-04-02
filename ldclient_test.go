@@ -14,7 +14,7 @@ import (
 type testUpdateProcessor struct{}
 
 func (u testUpdateProcessor) Initialized() bool     { return true }
-func (u testUpdateProcessor) Close()                {}
+func (u testUpdateProcessor) Close() error          { return nil }
 func (u testUpdateProcessor) Start(chan<- struct{}) {}
 
 type testEventProcessor struct {
@@ -29,7 +29,9 @@ func (t *testEventProcessor) Flush() error {
 	return nil
 }
 
-func (t *testEventProcessor) Close() {}
+func (t *testEventProcessor) Close() error {
+	return nil
+}
 
 func TestOfflineModeAlwaysReturnsDefaultValue(t *testing.T) {
 	config := Config{

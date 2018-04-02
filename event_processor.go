@@ -16,7 +16,7 @@ type EventProcessor interface {
 	// Delivers all buffered events now and waits until they have been sent.
 	Flush() error
 	// Flushes and then shuts down all event processor activity. Subsequent events will be discarded.
-	Close()
+	Close() error
 }
 
 type nullEventProcessor struct{}
@@ -126,7 +126,8 @@ func (n *nullEventProcessor) Flush() error {
 	return nil
 }
 
-func (n *nullEventProcessor) Close() {
+func (n *nullEventProcessor) Close() error {
+	return nil
 }
 
 func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
@@ -170,8 +171,9 @@ func (ep *defaultEventProcessor) Flush() error {
 	return err
 }
 
-func (ep *defaultEventProcessor) Close() {
+func (ep *defaultEventProcessor) Close() error {
 	ep.consumer.close()
+	return nil
 }
 
 func (ec *eventConsumer) start() {
