@@ -34,12 +34,17 @@ type defaultEventProcessor struct {
 type eventDispatcher struct {
 	sdkKey            string
 	config            Config
-	events            []interface{}
-	summarizer        *eventSummarizer
 	workersGroup      sync.WaitGroup
 	lastKnownPastTime uint64
-	capacityExceeded  bool
 	disabled          int32 // Really a bool, but there's no atomic bool
+}
+
+type eventBuffer struct {
+	events           []interface{}
+	summarizer       eventSummarizer
+	capacity         int
+	capacityExceeded bool
+	logger           Logger
 }
 
 type flushPayload struct {
@@ -174,10 +179,8 @@ func (ep *defaultEventProcessor) waitUntilInactive() {
 func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 	inputCh chan eventDispatcherMessage) *eventDispatcher {
 	ed := &eventDispatcher{
-		sdkKey:     sdkKey,
-		config:     config,
-		events:     make([]interface{}, 0),
-		summarizer: newEventSummarizer(),
+		sdkKey: sdkKey,
+		config: config,
 	}
 
 	// Start a fixed-size pool of workers that wait on flushTriggerCh. This is the
@@ -199,6 +202,12 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 		ed.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 	}
 
+	buffer := eventBuffer{
+		events:     make([]interface{}, 0, ed.config.Capacity),
+		summarizer: newEventSummarizer(),
+		capacity:   ed.config.Capacity,
+		logger:     ed.config.Logger,
+	}
 	userKeys := newLruCache(ed.config.UserKeysCapacity)
 
 	flushInterval := ed.config.FlushInterval
@@ -217,9 +226,9 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 		case message := <-inputCh:
 			switch m := message.(type) {
 			case sendEventMessage:
-				ed.processEvent(m.event, &userKeys)
+				ed.processEvent(m.event, &buffer, &userKeys)
 			case flushEventsMessage:
-				ed.triggerFlush(flushCh)
+				ed.triggerFlush(&buffer, flushCh)
 			case syncEventsMessage:
 				m.replyCh <- struct{}{}
 			case shutdownEventsMessage:
@@ -231,7 +240,7 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 				return
 			}
 		case <-flushTicker.C:
-			ed.triggerFlush(flushCh)
+			ed.triggerFlush(&buffer, flushCh)
 		case <-usersResetTicker.C:
 			userKeys.clear()
 		}
@@ -254,7 +263,7 @@ func (ed *eventDispatcher) isDisabled() bool {
 	return atomic.LoadInt32(&ed.disabled) != 0
 }
 
-func (ed *eventDispatcher) processEvent(evt Event, userKeys *lruCache) {
+func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys *lruCache) {
 	if ed.isDisabled() {
 		return
 	}
@@ -269,20 +278,20 @@ func (ed *eventDispatcher) processEvent(evt Event, userKeys *lruCache) {
 					CreationDate: evt.GetBase().CreationDate,
 					User:         &user,
 				}
-				ed.queueEvent(indexEvent)
+				buffer.queueEvent(indexEvent)
 			}
 		}
 	}
 
 	// Always record the event in the summarizer.
-	ed.summarizer.summarizeEvent(evt)
+	buffer.summarizer.summarizeEvent(evt)
 
 	if ed.shouldTrackFullEvent(evt) {
 		// Sampling interval applies only to fully-tracked events.
 		if ed.config.SamplingInterval == 0 || rand.Int31n(ed.config.SamplingInterval) == 0 {
 			// Queue the event as-is; we'll transform it into an output event when we're flushing
 			// (to avoid doing that work on our main goroutine).
-			ed.queueEvent(evt)
+			buffer.queueEvent(evt)
 		}
 	}
 }
@@ -319,30 +328,18 @@ func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 	}
 }
 
-func (ed *eventDispatcher) queueEvent(event interface{}) {
-	if len(ed.events) >= ed.config.Capacity {
-		if !ed.capacityExceeded {
-			ed.capacityExceeded = true
-			ed.config.Logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
-		}
-	} else {
-		ed.capacityExceeded = false
-		ed.events = append(ed.events, event)
-	}
-}
-
 // Signal that we would like to do a flush as soon as possible.
-func (ed *eventDispatcher) triggerFlush(flushCh chan *flushPayload) {
+func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flushPayload) {
 	if ed.isDisabled() {
 		return
 	}
 	// Is there anything to flush?
-	summary := ed.summarizer.snapshot()
-	if len(ed.events) == 0 && len(summary.counters) == 0 {
+	summary := buffer.summarizer.snapshot()
+	if len(buffer.events) == 0 && len(summary.counters) == 0 {
 		return
 	}
 	payload := flushPayload{
-		events:  ed.events,
+		events:  buffer.events,
 		summary: summary,
 	}
 	ed.workersGroup.Add(1) // Increment the count of active flushes
@@ -351,8 +348,7 @@ func (ed *eventDispatcher) triggerFlush(flushCh chan *flushPayload) {
 		// If the channel wasn't full, then there is a worker available who will pick up
 		// this flush payload and send it. The event buffer and summary state can now be
 		// cleared from the main goroutine.
-		ed.events = make([]interface{}, 0)
-		ed.summarizer.reset()
+		buffer.clear()
 	default:
 		// We can't start a flush right now because we're waiting for one of the workers
 		// to pick up the last one.  Do not reset the event buffer or summary state.
@@ -511,4 +507,21 @@ func (ed *eventDispatcher) makeSummaryEvent(snapshot eventSummary) summaryEventO
 		EndDate:   snapshot.endDate,
 		Features:  features,
 	}
+}
+
+func (b *eventBuffer) queueEvent(event interface{}) {
+	if len(b.events) >= b.capacity {
+		if !b.capacityExceeded {
+			b.capacityExceeded = true
+			b.logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
+		}
+	} else {
+		b.capacityExceeded = false
+		b.events = append(b.events, event)
+	}
+}
+
+func (b *eventBuffer) clear() {
+	b.events = make([]interface{}, 0, b.capacity)
+	b.summarizer.reset()
 }
