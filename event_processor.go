@@ -180,10 +180,11 @@ func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 		summarizer: newEventSummarizer(),
 	}
 
-	flushCh := make(chan *flushPayload, 1)
-
 	// Start a fixed-size pool of workers that wait on flushTriggerCh. This is the
 	// maximum number of flushes we can do concurrently.
+	// Note, it would be nice to create workersGroup locally here too, except that we
+	// need to be able to access it from defaultEventProcessor.waitUntilInactive().
+	flushCh := make(chan *flushPayload, 1)
 	for i := 0; i < maxFlushWorkers; i++ {
 		go ed.runFlushWorker(flushCh, client)
 	}
