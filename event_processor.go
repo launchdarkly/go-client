@@ -34,7 +34,6 @@ type defaultEventProcessor struct {
 type eventDispatcher struct {
 	sdkKey            string
 	config            Config
-	workersGroup      sync.WaitGroup
 	lastKnownPastTime uint64
 	disabled          int32 // Really a bool, but there's no atomic bool
 }
@@ -173,7 +172,6 @@ func (ep *defaultEventProcessor) waitUntilInactive() {
 	m := syncEventsMessage{replyCh: make(chan struct{})}
 	ep.inputCh <- m
 	<-m.replyCh // Now we know that all events prior to this call have been processed
-	ep.dispatcher.workersGroup.Wait()
 }
 
 func startEventDispatcher(sdkKey string, config Config, client *http.Client,
@@ -185,19 +183,18 @@ func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 
 	// Start a fixed-size pool of workers that wait on flushTriggerCh. This is the
 	// maximum number of flushes we can do concurrently.
-	// Note, it would be nice to create workersGroup locally here too, except that we
-	// need to be able to access it from defaultEventProcessor.waitUntilInactive().
 	flushCh := make(chan *flushPayload, 1)
+	var workersGroup sync.WaitGroup
 	for i := 0; i < maxFlushWorkers; i++ {
-		go ed.runFlushWorker(flushCh, client)
+		go ed.runFlushWorker(flushCh, client, &workersGroup)
 	}
-	go ed.runMainLoop(inputCh, flushCh)
+	go ed.runMainLoop(inputCh, flushCh, &workersGroup)
 
 	return ed
 }
 
 func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
-	flushCh chan *flushPayload) {
+	flushCh chan *flushPayload, workersGroup *sync.WaitGroup) {
 	if err := recover(); err != nil {
 		ed.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 	}
@@ -228,26 +225,28 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 			case sendEventMessage:
 				ed.processEvent(m.event, &buffer, &userKeys)
 			case flushEventsMessage:
-				ed.triggerFlush(&buffer, flushCh)
+				ed.triggerFlush(&buffer, flushCh, workersGroup)
 			case syncEventsMessage:
+				workersGroup.Wait()
 				m.replyCh <- struct{}{}
 			case shutdownEventsMessage:
 				flushTicker.Stop()
 				usersResetTicker.Stop()
-				ed.workersGroup.Wait() // Wait for all in-progress flushes to complete
-				close(flushCh)         // Causes all idle flush workers to terminate
+				workersGroup.Wait() // Wait for all in-progress flushes to complete
+				close(flushCh)      // Causes all idle flush workers to terminate
 				m.replyCh <- struct{}{}
 				return
 			}
 		case <-flushTicker.C:
-			ed.triggerFlush(&buffer, flushCh)
+			ed.triggerFlush(&buffer, flushCh, workersGroup)
 		case <-usersResetTicker.C:
 			userKeys.clear()
 		}
 	}
 }
 
-func (ed *eventDispatcher) runFlushWorker(flushCh chan *flushPayload, client *http.Client) {
+func (ed *eventDispatcher) runFlushWorker(flushCh chan *flushPayload, client *http.Client,
+	workersGroup *sync.WaitGroup) {
 	for {
 		payload, more := <-flushCh
 		if !more {
@@ -255,7 +254,7 @@ func (ed *eventDispatcher) runFlushWorker(flushCh chan *flushPayload, client *ht
 			break
 		}
 		ed.doFlush(payload, client)
-		ed.workersGroup.Done() // Decrement the count of in-progress flushes
+		workersGroup.Done() // Decrement the count of in-progress flushes
 	}
 }
 
@@ -329,7 +328,8 @@ func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 }
 
 // Signal that we would like to do a flush as soon as possible.
-func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flushPayload) {
+func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flushPayload,
+	workersGroup *sync.WaitGroup) {
 	if ed.isDisabled() {
 		return
 	}
@@ -342,7 +342,7 @@ func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flush
 		events:  buffer.events,
 		summary: summary,
 	}
-	ed.workersGroup.Add(1) // Increment the count of active flushes
+	workersGroup.Add(1) // Increment the count of active flushes
 	select {
 	case flushCh <- &payload:
 		// If the channel wasn't full, then there is a worker available who will pick up
@@ -352,7 +352,7 @@ func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flush
 	default:
 		// We can't start a flush right now because we're waiting for one of the workers
 		// to pick up the last one.  Do not reset the event buffer or summary state.
-		ed.workersGroup.Done()
+		workersGroup.Done()
 	}
 }
 
