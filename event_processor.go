@@ -34,7 +34,6 @@ type defaultEventProcessor struct {
 type eventDispatcher struct {
 	sdkKey            string
 	config            Config
-	client            *http.Client
 	events            []interface{}
 	summarizer        *eventSummarizer
 	userKeys          lruCache
