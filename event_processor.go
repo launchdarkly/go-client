@@ -216,7 +216,7 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 		case message := <-inputCh:
 			switch m := message.(type) {
 			case sendEventMessage:
-				ed.processEvent(m.event, userKeys)
+				ed.processEvent(m.event, &userKeys)
 			case flushEventsMessage:
 				ed.triggerFlush(flushCh)
 			case syncEventsMessage:
@@ -253,7 +253,7 @@ func (ed *eventDispatcher) isDisabled() bool {
 	return atomic.LoadInt32(&ed.disabled) != 0
 }
 
-func (ed *eventDispatcher) processEvent(evt Event, userKeys lruCache) {
+func (ed *eventDispatcher) processEvent(evt Event, userKeys *lruCache) {
 	if ed.isDisabled() {
 		return
 	}
@@ -287,7 +287,7 @@ func (ed *eventDispatcher) processEvent(evt Event, userKeys lruCache) {
 }
 
 // Add to the set of users we've noticed, and return true if the user was already known to us.
-func noticeUser(userKeys lruCache, user *User) bool {
+func noticeUser(userKeys *lruCache, user *User) bool {
 	if user == nil || user.Key == nil {
 		return true
 	}
