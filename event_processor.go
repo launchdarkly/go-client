@@ -26,16 +26,16 @@ type EventProcessor interface {
 type nullEventProcessor struct{}
 
 type defaultEventProcessor struct {
-	inputCh   chan eventConsumerMessage
-	consumer  *eventConsumer
-	closeOnce sync.Once
+	inputCh    chan eventDispatcherMessage
+	dispatcher *eventDispatcher
+	closeOnce  sync.Once
 }
 
-type eventConsumer struct {
+type eventDispatcher struct {
 	sdkKey            string
 	config            Config
 	client            *http.Client
-	inputCh           chan eventConsumerMessage
+	inputCh           chan eventDispatcherMessage
 	events            []interface{}
 	summarizer        *eventSummarizer
 	userKeys          lruCache
@@ -52,7 +52,7 @@ type flushPayload struct {
 }
 
 // Payload of the inputCh channel.
-type eventConsumerMessage interface{}
+type eventDispatcherMessage interface{}
 
 type sendEventMessage struct {
 	event Event
@@ -142,8 +142,8 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 	if client == nil {
 		client = &http.Client{}
 	}
-	inputCh := make(chan eventConsumerMessage, config.Capacity)
-	consumer := &eventConsumer{
+	inputCh := make(chan eventDispatcherMessage, config.Capacity)
+	dispatcher := &eventDispatcher{
 		sdkKey:     sdkKey,
 		config:     config,
 		inputCh:    inputCh,
@@ -154,10 +154,10 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 		userKeys:   newLruCache(config.UserKeysCapacity),
 	}
 	res := &defaultEventProcessor{
-		inputCh:  inputCh,
-		consumer: consumer,
+		inputCh:    inputCh,
+		dispatcher: dispatcher,
 	}
-	consumer.start()
+	dispatcher.start()
 	return res
 }
 
@@ -183,10 +183,10 @@ func (ep *defaultEventProcessor) waitUntilInactive() {
 	m := syncEventsMessage{replyCh: make(chan struct{})}
 	ep.inputCh <- m
 	<-m.replyCh // Now we know that all events prior to this call have been processed
-	ep.consumer.workersGroup.Wait()
+	ep.dispatcher.workersGroup.Wait()
 }
 
-func (ec *eventConsumer) start() {
+func (ec *eventDispatcher) start() {
 	// Start a fixed-size pool of workers that wait on flushTriggerCh. This is the
 	// maximum number of flushes we can do concurrently.
 	for i := 0; i < maxFlushWorkers; i++ {
@@ -195,7 +195,7 @@ func (ec *eventConsumer) start() {
 	go ec.runMainLoop()
 }
 
-func (ec *eventConsumer) runMainLoop() {
+func (ec *eventDispatcher) runMainLoop() {
 	if err := recover(); err != nil {
 		ec.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 	}
@@ -237,7 +237,7 @@ func (ec *eventConsumer) runMainLoop() {
 	}
 }
 
-func (ec *eventConsumer) runFlushWorker(n int) {
+func (ec *eventDispatcher) runFlushWorker(n int) {
 	for {
 		payload, more := <-ec.flushCh
 		if !more {
@@ -249,11 +249,11 @@ func (ec *eventConsumer) runFlushWorker(n int) {
 	}
 }
 
-func (ec *eventConsumer) isDisabled() bool {
+func (ec *eventDispatcher) isDisabled() bool {
 	return atomic.LoadInt32(&ec.disabled) != 0
 }
 
-func (ec *eventConsumer) processEvent(evt Event) {
+func (ec *eventDispatcher) processEvent(evt Event) {
 	if ec.isDisabled() {
 		return
 	}
@@ -287,14 +287,14 @@ func (ec *eventConsumer) processEvent(evt Event) {
 }
 
 // Add to the set of users we've noticed, and return true if the user was already known to us.
-func (ec *eventConsumer) noticeUser(user *User) bool {
+func (ec *eventDispatcher) noticeUser(user *User) bool {
 	if user == nil || user.Key == nil {
 		return true
 	}
 	return ec.userKeys.add(*user.Key)
 }
 
-func (ec *eventConsumer) shouldTrackFullEvent(evt Event) bool {
+func (ec *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		if evt.TrackEvents {
@@ -318,7 +318,7 @@ func (ec *eventConsumer) shouldTrackFullEvent(evt Event) bool {
 	}
 }
 
-func (ec *eventConsumer) queueEvent(event interface{}) {
+func (ec *eventDispatcher) queueEvent(event interface{}) {
 	if len(ec.events) >= ec.config.Capacity {
 		if !ec.capacityExceeded {
 			ec.capacityExceeded = true
@@ -331,7 +331,7 @@ func (ec *eventConsumer) queueEvent(event interface{}) {
 }
 
 // Signal that we would like to do a flush as soon as possible.
-func (ec *eventConsumer) triggerFlush() {
+func (ec *eventDispatcher) triggerFlush() {
 	if ec.isDisabled() {
 		return
 	}
@@ -360,7 +360,7 @@ func (ec *eventConsumer) triggerFlush() {
 }
 
 // Runs on a flush worker thread
-func (ec *eventConsumer) doFlush(payload *flushPayload) {
+func (ec *eventDispatcher) doFlush(payload *flushPayload) {
 	if len(payload.events) == 0 && len(payload.summary.counters) == 0 {
 		return
 	}
@@ -409,7 +409,7 @@ func (ec *eventConsumer) doFlush(payload *flushPayload) {
 	ec.handleResponse(resp)
 }
 
-func (ec *eventConsumer) handleResponse(resp *http.Response) {
+func (ec *eventDispatcher) handleResponse(resp *http.Response) {
 	err := checkStatusCode(resp.StatusCode, resp.Request.URL.String())
 	if err != nil {
 		ec.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
@@ -426,7 +426,7 @@ func (ec *eventConsumer) handleResponse(resp *http.Response) {
 	}
 }
 
-func (ec *eventConsumer) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
+func (ec *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		fe := featureRequestEventOutput{
@@ -478,7 +478,7 @@ func (ec *eventConsumer) makeOutputEvent(evt interface{}, uf *userFilter) interf
 }
 
 // Transforms the summary data into the format used for event sending.
-func (ec *eventConsumer) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
+func (ec *eventDispatcher) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
 	features := make(map[string]flagSummaryData)
 	for key, value := range snapshot.counters {
 		var flagData flagSummaryData
