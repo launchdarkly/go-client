@@ -7,53 +7,65 @@ import (
 	"math/rand"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type EventProcessor interface {
-	// Sends an event asynchronously.
+	// Records an event asynchronously.
 	SendEvent(Event)
-	// Delivers all buffered events now and waits until they have been sent.
-	Flush() error
-	// Flushes and then shuts down all event processor activity. Subsequent events will be discarded.
+	// Specifies that any buffered events should be sent as soon as possible, rather than waiting
+	// for the next flush interval. This method is asynchronous, so events still may not be sent
+	// until a later time.
+	Flush()
+	// Shuts down all event processor activity, after first ensuring that all events have been
+	// delivered. Subsequent calls to SendEvent() or Flush() will be ignored.
 	Close()
 }
 
 type nullEventProcessor struct{}
 
 type defaultEventProcessor struct {
-	eventsIn chan eventInput
-	consumer *eventConsumer
+	inputCh    chan eventDispatcherMessage
+	dispatcher *eventDispatcher
+	closeOnce  sync.Once
 }
 
-type eventConsumer struct {
+type eventDispatcher struct {
 	sdkKey            string
 	config            Config
 	client            *http.Client
-	eventsIn          chan eventInput
-	queue             []interface{}
+	inputCh           chan eventDispatcherMessage
+	events            []interface{}
 	summarizer        *eventSummarizer
 	userKeys          lruCache
 	lastKnownPastTime uint64
 	capacityExceeded  bool
-	responseCh        chan *http.Response
-	closer            chan struct{}
-	closeOnce         sync.Once
-	disabled          bool
+	flushCh           chan *flushPayload
+	workersGroup      sync.WaitGroup
+	disabled          int32 // Really a bool, but there's no atomic bool
 }
 
-type eventPayloadSendTask struct {
-	consumer *eventConsumer
-	events   []interface{}
-	summary  eventSummary
-	replyCh  chan error
+type flushPayload struct {
+	events  []interface{}
+	summary eventSummary
 }
 
-// Payload of the eventsIn channel. If event is nil, this is a flush request. The reply
-// channel is non-nil if the caller has requested a reply (for flushes only).
-type eventInput struct {
+// Payload of the inputCh channel.
+type eventDispatcherMessage interface{}
+
+type sendEventMessage struct {
 	event Event
-	reply chan error
+}
+
+type flushEventsMessage struct{}
+
+type shutdownEventsMessage struct {
+	replyCh chan struct{}
+}
+
+type syncEventsMessage struct {
+	replyCh chan struct{}
 }
 
 // Serializable form of a feature request event. This differs from the event that was
@@ -113,118 +125,136 @@ const (
 	IDENTIFY_EVENT        = "identify"
 	INDEX_EVENT           = "index"
 	SUMMARY_EVENT         = "summary"
+	maxFlushWorkers       = 5
 )
 
 func newNullEventProcessor() *nullEventProcessor {
 	return &nullEventProcessor{}
 }
 
-func (n *nullEventProcessor) SendEvent(e Event) {
-}
+func (n *nullEventProcessor) SendEvent(e Event) {}
 
-func (n *nullEventProcessor) Flush() error {
-	return nil
-}
+func (n *nullEventProcessor) Flush() {}
 
-func (n *nullEventProcessor) Close() {
-}
+func (n *nullEventProcessor) Close() {}
 
 func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
 	if client == nil {
 		client = &http.Client{}
 	}
-	eventsIn := make(chan eventInput, 100)
-	consumer := &eventConsumer{
+	inputCh := make(chan eventDispatcherMessage, config.Capacity)
+	dispatcher := &eventDispatcher{
 		sdkKey:     sdkKey,
 		config:     config,
-		eventsIn:   eventsIn,
-		queue:      make([]interface{}, 0),
+		inputCh:    inputCh,
+		events:     make([]interface{}, 0),
 		client:     client,
-		responseCh: make(chan *http.Response),
-		closer:     make(chan struct{}),
+		flushCh:    make(chan *flushPayload, 1),
 		summarizer: newEventSummarizer(),
 		userKeys:   newLruCache(config.UserKeysCapacity),
 	}
 	res := &defaultEventProcessor{
-		eventsIn: eventsIn,
-		consumer: consumer,
+		inputCh:    inputCh,
+		dispatcher: dispatcher,
 	}
-	consumer.start()
+	dispatcher.start()
 	return res
 }
 
 func (ep *defaultEventProcessor) SendEvent(e Event) {
-	ep.eventsIn <- eventInput{
-		event: e,
-		reply: nil,
-	}
+	ep.inputCh <- sendEventMessage{event: e}
 }
 
-func (ep *defaultEventProcessor) Flush() error {
-	input := eventInput{
-		event: nil,
-		reply: make(chan error),
-	}
-	ep.eventsIn <- input
-	err := <-input.reply
-	return err
+func (ep *defaultEventProcessor) Flush() {
+	ep.inputCh <- flushEventsMessage{}
 }
 
 func (ep *defaultEventProcessor) Close() {
-	ep.consumer.close()
-}
-
-func (ec *eventConsumer) start() {
-	go func() {
-		if err := recover(); err != nil {
-			ec.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
-		}
-
-		flushInterval := ec.config.FlushInterval
-		if flushInterval <= 0 {
-			flushInterval = DefaultConfig.FlushInterval
-		}
-		userKeysFlushInterval := ec.config.UserKeysFlushInterval
-		if userKeysFlushInterval <= 0 {
-			userKeysFlushInterval = DefaultConfig.UserKeysFlushInterval
-		}
-		flushTicker := time.NewTicker(flushInterval)
-		usersResetTicker := time.NewTicker(userKeysFlushInterval)
-		for {
-			select {
-			case eventIn := <-ec.eventsIn:
-				if eventIn.event == nil {
-					ec.dispatchFlush(eventIn.reply)
-				} else {
-					ec.sendEventInternal(eventIn.event)
-				}
-			case <-flushTicker.C:
-				ec.dispatchFlush(nil)
-			case <-usersResetTicker.C:
-				ec.userKeys.clear()
-			case resp := <-ec.responseCh:
-				ec.handleResponse(resp)
-			case <-ec.closer:
-				flushTicker.Stop()
-				usersResetTicker.Stop()
-				waitCh := make(chan error)
-				ec.dispatchFlush(waitCh)
-				<-waitCh
-				ec.disabled = true
-				return
-			}
-		}
-	}()
-}
-
-func (ec *eventConsumer) close() {
-	ec.closeOnce.Do(func() {
-		close(ec.closer)
+	ep.closeOnce.Do(func() {
+		ep.inputCh <- flushEventsMessage{}
+		m := shutdownEventsMessage{replyCh: make(chan struct{})}
+		ep.inputCh <- m
+		<-m.replyCh
 	})
 }
 
-func (ec *eventConsumer) sendEventInternal(evt Event) {
-	if ec.disabled {
+// used only for testing - ensures that all pending messages and flushes have completed
+func (ep *defaultEventProcessor) waitUntilInactive() {
+	m := syncEventsMessage{replyCh: make(chan struct{})}
+	ep.inputCh <- m
+	<-m.replyCh // Now we know that all events prior to this call have been processed
+	ep.dispatcher.workersGroup.Wait()
+}
+
+func (ec *eventDispatcher) start() {
+	// Start a fixed-size pool of workers that wait on flushTriggerCh. This is the
+	// maximum number of flushes we can do concurrently.
+	for i := 0; i < maxFlushWorkers; i++ {
+		go ec.runFlushWorker(i)
+	}
+	go ec.runMainLoop()
+}
+
+func (ec *eventDispatcher) runMainLoop() {
+	if err := recover(); err != nil {
+		ec.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
+	}
+
+	flushInterval := ec.config.FlushInterval
+	if flushInterval <= 0 {
+		flushInterval = DefaultConfig.FlushInterval
+	}
+	userKeysFlushInterval := ec.config.UserKeysFlushInterval
+	if userKeysFlushInterval <= 0 {
+		userKeysFlushInterval = DefaultConfig.UserKeysFlushInterval
+	}
+	flushTicker := time.NewTicker(flushInterval)
+	usersResetTicker := time.NewTicker(userKeysFlushInterval)
+
+	for {
+		select {
+		case message := <-ec.inputCh:
+			switch m := message.(type) {
+			case sendEventMessage:
+				ec.processEvent(m.event)
+			case flushEventsMessage:
+				ec.triggerFlush()
+			case syncEventsMessage:
+				m.replyCh <- struct{}{}
+			case shutdownEventsMessage:
+				flushTicker.Stop()
+				usersResetTicker.Stop()
+				ec.workersGroup.Wait() // Wait for all in-progress flushes to complete
+				close(ec.flushCh)      // Causes all idle flush workers to terminate
+				m.replyCh <- struct{}{}
+				return
+			}
+		case <-flushTicker.C:
+			ec.triggerFlush()
+		case <-usersResetTicker.C:
+			ec.userKeys.clear()
+		}
+	}
+}
+
+func (ec *eventDispatcher) runFlushWorker(n int) {
+	for {
+		payload, more := <-ec.flushCh
+		if !more {
+			// Channel has been closed - we're shutting down
+			break
+		}
+		ec.doFlush(payload)
+		ec.workersGroup.Done() // Decrement the count of in-progress flushes
+	}
+}
+
+func (ec *eventDispatcher) isDisabled() bool {
+	return atomic.LoadInt32(&ec.disabled) != 0
+}
+
+func (ec *eventDispatcher) processEvent(evt Event) {
+	if ec.isDisabled() {
 		return
 	}
 	// For each user we haven't seen before, we add an index event - unless this is already
@@ -257,14 +287,14 @@ func (ec *eventConsumer) sendEventInternal(evt Event) {
 }
 
 // Add to the set of users we've noticed, and return true if the user was already known to us.
-func (ec *eventConsumer) noticeUser(user *User) bool {
+func (ec *eventDispatcher) noticeUser(user *User) bool {
 	if user == nil || user.Key == nil {
 		return true
 	}
 	return ec.userKeys.add(*user.Key)
 }
 
-func (ec *eventConsumer) shouldTrackFullEvent(evt Event) bool {
+func (ec *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		if evt.TrackEvents {
@@ -275,7 +305,8 @@ func (ec *eventConsumer) shouldTrackFullEvent(evt Event) bool {
 			// In case the client's time is set wrong, at least we know that any expiration date
 			// earlier than that point is definitely in the past.  If there's any discrepancy, we
 			// want to err on the side of cutting off event debugging sooner.
-			if *evt.DebugEventsUntilDate > ec.lastKnownPastTime &&
+			lastPast := atomic.LoadUint64(&ec.lastKnownPastTime)
+			if *evt.DebugEventsUntilDate > lastPast &&
 				*evt.DebugEventsUntilDate > now() {
 				return true
 			}
@@ -287,102 +318,82 @@ func (ec *eventConsumer) shouldTrackFullEvent(evt Event) bool {
 	}
 }
 
-func (ec *eventConsumer) queueEvent(event interface{}) {
-	if len(ec.queue) >= ec.config.Capacity {
+func (ec *eventDispatcher) queueEvent(event interface{}) {
+	if len(ec.events) >= ec.config.Capacity {
 		if !ec.capacityExceeded {
 			ec.capacityExceeded = true
 			ec.config.Logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
 		}
 	} else {
 		ec.capacityExceeded = false
-		ec.queue = append(ec.queue, event)
+		ec.events = append(ec.events, event)
 	}
 }
 
-func (ec *eventConsumer) dispatchFlush(replyCh chan error) {
-	if ec.disabled {
+// Signal that we would like to do a flush as soon as possible.
+func (ec *eventDispatcher) triggerFlush() {
+	if ec.isDisabled() {
 		return
 	}
-	events := ec.queue
+	// Is there anything to flush?
 	summary := ec.summarizer.snapshot()
-	ec.queue = make([]interface{}, 0)
-
-	if len(events) == 0 && len(summary.counters) == 0 {
-		if replyCh != nil {
-			replyCh <- nil
-		}
-	} else {
-		task := eventPayloadSendTask{
-			consumer: ec,
-			events:   events,
-			summary:  summary,
-			replyCh:  replyCh,
-		}
-		task.start()
+	if len(ec.events) == 0 && len(summary.counters) == 0 {
+		return
+	}
+	payload := flushPayload{
+		events:  ec.events,
+		summary: summary,
+	}
+	ec.workersGroup.Add(1) // Increment the count of active flushes
+	select {
+	case ec.flushCh <- &payload:
+		// If the channel wasn't full, then there is a worker available who will pick up
+		// this flush payload and send it. The event buffer and summary state can now be
+		// cleared from the main goroutine.
+		ec.events = make([]interface{}, 0)
+		ec.summarizer.reset()
+	default:
+		// We can't start a flush right now because we're waiting for one of the workers
+		// to pick up the last one.  Do not reset the event buffer or summary state.
+		ec.workersGroup.Done()
 	}
 }
 
-func (ec *eventConsumer) handleResponse(resp *http.Response) {
-	err := checkStatusCode(resp.StatusCode, resp.Request.URL.String())
-	if err != nil {
-		ec.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
-		if err != nil && err.Code == 401 {
-			ec.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
-			ec.disabled = true
-		}
-	} else {
-		dt, err := http.ParseTime(resp.Header.Get("Date"))
-		if err == nil {
-			tm := toUnixMillis(dt)
-			if tm > ec.lastKnownPastTime {
-				ec.lastKnownPastTime = tm
-			}
-		}
+// Runs on a flush worker thread
+func (ec *eventDispatcher) doFlush(payload *flushPayload) {
+	if len(payload.events) == 0 && len(payload.summary.counters) == 0 {
+		return
 	}
-}
-
-func (t *eventPayloadSendTask) start() {
-	go func() {
-		err := t.flushInternal()
-		if t.replyCh != nil {
-			t.replyCh <- err
-		}
-	}()
-}
-
-func (t *eventPayloadSendTask) flushInternal() error {
-	outputEvents := make([]interface{}, 0, len(t.events)+1) // leave room for summary, if any
-	userFilter := newUserFilter(t.consumer.config)
-	for _, e := range t.events {
-		oe := t.makeOutputEvent(e, &userFilter)
+	outputEvents := make([]interface{}, 0, len(payload.events)+1) // leave room for summary, if any
+	userFilter := newUserFilter(ec.config)
+	for _, e := range payload.events {
+		oe := ec.makeOutputEvent(e, &userFilter)
 		if oe != nil {
 			outputEvents = append(outputEvents, oe)
 		}
 	}
-	if len(t.summary.counters) > 0 {
-		outputEvents = append(outputEvents, t.makeSummaryEvent(t.summary))
+	if len(payload.summary.counters) > 0 {
+		outputEvents = append(outputEvents, ec.makeSummaryEvent(payload.summary))
 	}
 
-	payload, marshalErr := json.Marshal(outputEvents)
-
+	jsonPayload, marshalErr := json.Marshal(outputEvents)
 	if marshalErr != nil {
-		t.consumer.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
-		return marshalErr
+		ec.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
+		return
 	}
 
-	eventsUri := t.consumer.config.EventsUri + "/bulk"
-	req, reqErr := http.NewRequest("POST", eventsUri, bytes.NewReader(payload))
-
+	eventsUri := ec.config.EventsUri + "/bulk"
+	req, reqErr := http.NewRequest("POST", eventsUri, bytes.NewReader(jsonPayload))
 	if reqErr != nil {
-		t.consumer.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
-		return reqErr
+		ec.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
+		return
 	}
 
-	req.Header.Add("Authorization", t.consumer.sdkKey)
+	req.Header.Add("Authorization", ec.sdkKey)
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("User-Agent", t.consumer.config.UserAgent)
+	req.Header.Add("User-Agent", ec.config.UserAgent)
 
-	resp, respErr := t.consumer.client.Do(req)
+	resp, respErr := ec.client.Do(req)
 
 	defer func() {
 		if resp != nil && resp.Body != nil {
@@ -392,15 +403,30 @@ func (t *eventPayloadSendTask) flushInternal() error {
 	}()
 
 	if respErr != nil {
-		t.consumer.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
-		return respErr
+		ec.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
+		return
 	}
-	t.consumer.responseCh <- resp
-	err := checkStatusCode(resp.StatusCode, eventsUri)
-	return err
+	ec.handleResponse(resp)
 }
 
-func (t *eventPayloadSendTask) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
+func (ec *eventDispatcher) handleResponse(resp *http.Response) {
+	err := checkStatusCode(resp.StatusCode, resp.Request.URL.String())
+	if err != nil {
+		ec.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
+		if err != nil && err.Code == 401 {
+			ec.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
+			atomic.StoreInt32(&ec.disabled, 1)
+		}
+	} else {
+		dt, err := http.ParseTime(resp.Header.Get("Date"))
+		if err == nil {
+			tm := toUnixMillis(dt)
+			atomic.StoreUint64(&ec.lastKnownPastTime, tm)
+		}
+	}
+}
+
+func (ec *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		fe := featureRequestEventOutput{
@@ -411,7 +437,7 @@ func (t *eventPayloadSendTask) makeOutputEvent(evt interface{}, uf *userFilter) 
 			Version:      evt.Version,
 			PrereqOf:     evt.PrereqOf,
 		}
-		if t.consumer.config.InlineUsersInEvents {
+		if ec.config.InlineUsersInEvents {
 			fe.User = uf.scrubUser(evt.User)
 		} else {
 			fe.UserKey = evt.User.Key
@@ -429,7 +455,7 @@ func (t *eventPayloadSendTask) makeOutputEvent(evt interface{}, uf *userFilter) 
 			Key:          evt.Key,
 			Data:         evt.Data,
 		}
-		if t.consumer.config.InlineUsersInEvents {
+		if ec.config.InlineUsersInEvents {
 			ce.User = uf.scrubUser(evt.User)
 		} else {
 			ce.UserKey = evt.User.Key
@@ -446,13 +472,13 @@ func (t *eventPayloadSendTask) makeOutputEvent(evt interface{}, uf *userFilter) 
 		evt.User = uf.scrubUser(*evt.User)
 		return evt
 	default:
-		t.consumer.config.Logger.Printf("Found unknown event type in output queue: %T", evt)
+		ec.config.Logger.Printf("Found unknown event type in output queue: %T", evt)
 		return nil
 	}
 }
 
 // Transforms the summary data into the format used for event sending.
-func (t *eventPayloadSendTask) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
+func (ec *eventDispatcher) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
 	features := make(map[string]flagSummaryData)
 	for key, value := range snapshot.counters {
 		var flagData flagSummaryData

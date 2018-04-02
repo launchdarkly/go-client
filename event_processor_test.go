@@ -2,7 +2,6 @@ package ldclient
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -68,15 +67,7 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
-
-	ieo := output[0]
-	expected := jsonMap(map[string]interface{}{
-		"kind":         "identify",
-		"creationDate": float64(ie.CreationDate),
-		"key":          *epDefaultUser.Key,
-		"user":         userJson,
-	})
-	assert.Equal(t, expected, ieo)
+	assertIdentifyEventMatches(t, ie, userJson, output[0])
 }
 
 func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
@@ -90,15 +81,7 @@ func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 1, len(output))
-
-	ieo := output[0]
-	expected := jsonMap(map[string]interface{}{
-		"kind":         "identify",
-		"creationDate": float64(ie.CreationDate),
-		"key":          "userKey",
-		"user":         filteredUserJson,
-	})
-	assert.Equal(t, expected, ieo)
+	assertIdentifyEventMatches(t, ie, filteredUserJson, output[0])
 }
 
 func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
@@ -234,6 +217,7 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
 	ep.SendEvent(ie)
 	ep.Flush()
+	ep.waitUntilInactive()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the server time, but in the past compared to the client.
@@ -268,6 +252,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	ie := NewIdentifyEvent(User{Key: strPtr("otherUser")})
 	ep.SendEvent(ie)
 	ep.Flush()
+	ep.waitUntilInactive()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the client time, but in the past compared to the server.
@@ -411,10 +396,25 @@ func TestCustomEventCanContainInlineUser(t *testing.T) {
 	assert.Equal(t, expected, ceo)
 }
 
+func TestClosingEventProcessorForcesSynchronousFlush(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.Close()
+
+	ie := NewIdentifyEvent(epDefaultUser)
+	ep.SendEvent(ie)
+	ep.Close()
+
+	output := getEventsFromLastRequest(st)
+	assert.Equal(t, 1, len(output))
+	assertIdentifyEventMatches(t, ie, userJson, output[0])
+}
+
 func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.Close()
+
 	ep.Flush()
+	ep.waitUntilInactive()
 
 	assert.Nil(t, st.messageSent)
 }
@@ -425,36 +425,24 @@ func TestSdkKeyIsSent(t *testing.T) {
 
 	ie := NewIdentifyEvent(epDefaultUser)
 	ep.SendEvent(ie)
-
 	ep.Flush()
+	ep.waitUntilInactive()
+
 	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
 }
 
-func TestFlushReturnsHttpGeneralError(t *testing.T) {
-	ep, st := createEventProcessor(epDefaultConfig)
+func TestUserAgentIsSent(t *testing.T) {
+	config := epDefaultConfig
+	config.UserAgent = "SecretAgent"
+	ep, st := createEventProcessor(config)
 	defer ep.Close()
-
-	expectedErr := fmt.Errorf("problems")
-	st.error = expectedErr
 
 	ie := NewIdentifyEvent(epDefaultUser)
 	ep.SendEvent(ie)
+	ep.Flush()
+	ep.waitUntilInactive()
 
-	err := ep.Flush()
-	assert.Equal(t, "Post /bulk: "+expectedErr.Error(), err.Error())
-}
-
-func TestFlushReturnsHttpResponseError(t *testing.T) {
-	ep, st := createEventProcessor(epDefaultConfig)
-	defer ep.Close()
-
-	st.statusCode = 400
-
-	ie := NewIdentifyEvent(epDefaultUser)
-	ep.SendEvent(ie)
-
-	err := ep.Flush()
-	assert.Equal(t, "Unexpected response code: 400 when accessing URL: /bulk", err.Error())
+	assert.Equal(t, config.UserAgent, st.messageSent.Header.Get("User-Agent"))
 }
 
 func jsonMap(o interface{}) map[string]interface{} {
@@ -462,6 +450,16 @@ func jsonMap(o interface{}) map[string]interface{} {
 	var result map[string]interface{}
 	json.Unmarshal(bytes, &result)
 	return result
+}
+
+func assertIdentifyEventMatches(t *testing.T, sourceEvent Event, encodedUser map[string]interface{}, output map[string]interface{}) {
+	expected := map[string]interface{}{
+		"kind":         "identify",
+		"key":          *sourceEvent.GetBase().User.Key,
+		"creationDate": float64(sourceEvent.GetBase().CreationDate),
+		"user":         encodedUser,
+	}
+	assert.Equal(t, expected, output)
 }
 
 func assertIndexEventMatches(t *testing.T, sourceEvent Event, encodedUser map[string]interface{}, output map[string]interface{}) {
@@ -524,8 +522,13 @@ func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport
 	return newDefaultEventProcessor(sdkKey, config, client), transport
 }
 
-func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) (output []map[string]interface{}) {
+func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) []map[string]interface{} {
 	ep.Flush()
+	ep.waitUntilInactive()
+	return getEventsFromLastRequest(st)
+}
+
+func getEventsFromLastRequest(st *stubTransport) (output []map[string]interface{}) {
 	if st.messageSent == nil || st.messageSent.Body == nil {
 		return
 	}

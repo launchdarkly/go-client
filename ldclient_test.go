@@ -25,9 +25,7 @@ func (t *testEventProcessor) SendEvent(e Event) {
 	t.events = append(t.events, e)
 }
 
-func (t *testEventProcessor) Flush() error {
-	return nil
-}
+func (t *testEventProcessor) Flush() {}
 
 func (t *testEventProcessor) Close() {}
 
