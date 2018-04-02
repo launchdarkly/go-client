@@ -20,7 +20,7 @@ type EventProcessor interface {
 	Flush()
 	// Shuts down all event processor activity, after first ensuring that all events have been
 	// delivered. Subsequent calls to SendEvent() or Flush() will be ignored.
-	Close()
+	Close() error
 }
 
 type nullEventProcessor struct{}
@@ -136,7 +136,9 @@ func (n *nullEventProcessor) SendEvent(e Event) {}
 
 func (n *nullEventProcessor) Flush() {}
 
-func (n *nullEventProcessor) Close() {}
+func (n *nullEventProcessor) Close() error {
+	return nil
+}
 
 func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
 	if client == nil {
@@ -169,13 +171,14 @@ func (ep *defaultEventProcessor) Flush() {
 	ep.inputCh <- flushEventsMessage{}
 }
 
-func (ep *defaultEventProcessor) Close() {
+func (ep *defaultEventProcessor) Close() error {
 	ep.closeOnce.Do(func() {
 		ep.inputCh <- flushEventsMessage{}
 		m := shutdownEventsMessage{replyCh: make(chan struct{})}
 		ep.inputCh <- m
 		<-m.replyCh
 	})
+	return nil
 }
 
 // used only for testing - ensures that all pending messages and flushes have completed
