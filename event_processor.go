@@ -36,7 +36,6 @@ type eventDispatcher struct {
 	config            Config
 	events            []interface{}
 	summarizer        *eventSummarizer
-	userKeys          lruCache
 	workersGroup      sync.WaitGroup
 	lastKnownPastTime uint64
 	capacityExceeded  bool
@@ -179,7 +178,6 @@ func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 		config:     config,
 		events:     make([]interface{}, 0),
 		summarizer: newEventSummarizer(),
-		userKeys:   newLruCache(config.UserKeysCapacity),
 	}
 
 	flushCh := make(chan *flushPayload, 1)
@@ -200,6 +198,8 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 		ed.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 	}
 
+	userKeys := newLruCache(ed.config.UserKeysCapacity)
+
 	flushInterval := ed.config.FlushInterval
 	if flushInterval <= 0 {
 		flushInterval = DefaultConfig.FlushInterval
@@ -216,7 +216,7 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 		case message := <-inputCh:
 			switch m := message.(type) {
 			case sendEventMessage:
-				ed.processEvent(m.event)
+				ed.processEvent(m.event, userKeys)
 			case flushEventsMessage:
 				ed.triggerFlush(flushCh)
 			case syncEventsMessage:
@@ -232,7 +232,7 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 		case <-flushTicker.C:
 			ed.triggerFlush(flushCh)
 		case <-usersResetTicker.C:
-			ed.userKeys.clear()
+			userKeys.clear()
 		}
 	}
 }
@@ -253,7 +253,7 @@ func (ed *eventDispatcher) isDisabled() bool {
 	return atomic.LoadInt32(&ed.disabled) != 0
 }
 
-func (ed *eventDispatcher) processEvent(evt Event) {
+func (ed *eventDispatcher) processEvent(evt Event, userKeys lruCache) {
 	if ed.isDisabled() {
 		return
 	}
@@ -261,7 +261,7 @@ func (ed *eventDispatcher) processEvent(evt Event) {
 	// an identify event for that user.
 	if !ed.config.InlineUsersInEvents {
 		user := evt.GetBase().User
-		if !ed.noticeUser(&user) {
+		if !noticeUser(userKeys, &user) {
 			if _, ok := evt.(IdentifyEvent); !ok {
 				indexEvent := indexEventOutput{
 					Kind:         INDEX_EVENT,
@@ -287,11 +287,11 @@ func (ed *eventDispatcher) processEvent(evt Event) {
 }
 
 // Add to the set of users we've noticed, and return true if the user was already known to us.
-func (ed *eventDispatcher) noticeUser(user *User) bool {
+func noticeUser(userKeys lruCache, user *User) bool {
 	if user == nil || user.Key == nil {
 		return true
 	}
-	return ed.userKeys.add(*user.Key)
+	return userKeys.add(*user.Key)
 }
 
 func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
