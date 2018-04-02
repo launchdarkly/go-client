@@ -35,14 +35,12 @@ type eventDispatcher struct {
 	sdkKey            string
 	config            Config
 	client            *http.Client
-	inputCh           chan eventDispatcherMessage
 	events            []interface{}
 	summarizer        *eventSummarizer
 	userKeys          lruCache
+	workersGroup      sync.WaitGroup
 	lastKnownPastTime uint64
 	capacityExceeded  bool
-	flushCh           chan *flushPayload
-	workersGroup      sync.WaitGroup
 	disabled          int32 // Really a bool, but there's no atomic bool
 }
 
@@ -143,22 +141,11 @@ func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client)
 		client = &http.Client{}
 	}
 	inputCh := make(chan eventDispatcherMessage, config.Capacity)
-	dispatcher := &eventDispatcher{
-		sdkKey:     sdkKey,
-		config:     config,
-		inputCh:    inputCh,
-		events:     make([]interface{}, 0),
-		client:     client,
-		flushCh:    make(chan *flushPayload, 1),
-		summarizer: newEventSummarizer(),
-		userKeys:   newLruCache(config.UserKeysCapacity),
-	}
-	res := &defaultEventProcessor{
+	dispatcher := startEventDispatcher(sdkKey, config, client, inputCh)
+	return &defaultEventProcessor{
 		inputCh:    inputCh,
 		dispatcher: dispatcher,
 	}
-	dispatcher.start()
-	return res
 }
 
 func (ep *defaultEventProcessor) SendEvent(e Event) {
@@ -186,25 +173,39 @@ func (ep *defaultEventProcessor) waitUntilInactive() {
 	ep.dispatcher.workersGroup.Wait()
 }
 
-func (ec *eventDispatcher) start() {
+func startEventDispatcher(sdkKey string, config Config, client *http.Client,
+	inputCh chan eventDispatcherMessage) *eventDispatcher {
+	ed := &eventDispatcher{
+		sdkKey:     sdkKey,
+		config:     config,
+		events:     make([]interface{}, 0),
+		summarizer: newEventSummarizer(),
+		userKeys:   newLruCache(config.UserKeysCapacity),
+	}
+
+	flushCh := make(chan *flushPayload, 1)
+
 	// Start a fixed-size pool of workers that wait on flushTriggerCh. This is the
 	// maximum number of flushes we can do concurrently.
 	for i := 0; i < maxFlushWorkers; i++ {
-		go ec.runFlushWorker(i)
+		go ed.runFlushWorker(flushCh, client)
 	}
-	go ec.runMainLoop()
+	go ed.runMainLoop(inputCh, flushCh)
+
+	return ed
 }
 
-func (ec *eventDispatcher) runMainLoop() {
+func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
+	flushCh chan *flushPayload) {
 	if err := recover(); err != nil {
-		ec.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
+		ed.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 	}
 
-	flushInterval := ec.config.FlushInterval
+	flushInterval := ed.config.FlushInterval
 	if flushInterval <= 0 {
 		flushInterval = DefaultConfig.FlushInterval
 	}
-	userKeysFlushInterval := ec.config.UserKeysFlushInterval
+	userKeysFlushInterval := ed.config.UserKeysFlushInterval
 	if userKeysFlushInterval <= 0 {
 		userKeysFlushInterval = DefaultConfig.UserKeysFlushInterval
 	}
@@ -213,88 +214,88 @@ func (ec *eventDispatcher) runMainLoop() {
 
 	for {
 		select {
-		case message := <-ec.inputCh:
+		case message := <-inputCh:
 			switch m := message.(type) {
 			case sendEventMessage:
-				ec.processEvent(m.event)
+				ed.processEvent(m.event)
 			case flushEventsMessage:
-				ec.triggerFlush()
+				ed.triggerFlush(flushCh)
 			case syncEventsMessage:
 				m.replyCh <- struct{}{}
 			case shutdownEventsMessage:
 				flushTicker.Stop()
 				usersResetTicker.Stop()
-				ec.workersGroup.Wait() // Wait for all in-progress flushes to complete
-				close(ec.flushCh)      // Causes all idle flush workers to terminate
+				ed.workersGroup.Wait() // Wait for all in-progress flushes to complete
+				close(flushCh)         // Causes all idle flush workers to terminate
 				m.replyCh <- struct{}{}
 				return
 			}
 		case <-flushTicker.C:
-			ec.triggerFlush()
+			ed.triggerFlush(flushCh)
 		case <-usersResetTicker.C:
-			ec.userKeys.clear()
+			ed.userKeys.clear()
 		}
 	}
 }
 
-func (ec *eventDispatcher) runFlushWorker(n int) {
+func (ed *eventDispatcher) runFlushWorker(flushCh chan *flushPayload, client *http.Client) {
 	for {
-		payload, more := <-ec.flushCh
+		payload, more := <-flushCh
 		if !more {
 			// Channel has been closed - we're shutting down
 			break
 		}
-		ec.doFlush(payload)
-		ec.workersGroup.Done() // Decrement the count of in-progress flushes
+		ed.doFlush(payload, client)
+		ed.workersGroup.Done() // Decrement the count of in-progress flushes
 	}
 }
 
-func (ec *eventDispatcher) isDisabled() bool {
-	return atomic.LoadInt32(&ec.disabled) != 0
+func (ed *eventDispatcher) isDisabled() bool {
+	return atomic.LoadInt32(&ed.disabled) != 0
 }
 
-func (ec *eventDispatcher) processEvent(evt Event) {
-	if ec.isDisabled() {
+func (ed *eventDispatcher) processEvent(evt Event) {
+	if ed.isDisabled() {
 		return
 	}
 	// For each user we haven't seen before, we add an index event - unless this is already
 	// an identify event for that user.
-	if !ec.config.InlineUsersInEvents {
+	if !ed.config.InlineUsersInEvents {
 		user := evt.GetBase().User
-		if !ec.noticeUser(&user) {
+		if !ed.noticeUser(&user) {
 			if _, ok := evt.(IdentifyEvent); !ok {
 				indexEvent := indexEventOutput{
 					Kind:         INDEX_EVENT,
 					CreationDate: evt.GetBase().CreationDate,
 					User:         &user,
 				}
-				ec.queueEvent(indexEvent)
+				ed.queueEvent(indexEvent)
 			}
 		}
 	}
 
 	// Always record the event in the summarizer.
-	ec.summarizer.summarizeEvent(evt)
+	ed.summarizer.summarizeEvent(evt)
 
-	if ec.shouldTrackFullEvent(evt) {
+	if ed.shouldTrackFullEvent(evt) {
 		// Sampling interval applies only to fully-tracked events.
-		if ec.config.SamplingInterval == 0 || rand.Int31n(ec.config.SamplingInterval) == 0 {
+		if ed.config.SamplingInterval == 0 || rand.Int31n(ed.config.SamplingInterval) == 0 {
 			// Queue the event as-is; we'll transform it into an output event when we're flushing
 			// (to avoid doing that work on our main goroutine).
-			ec.queueEvent(evt)
+			ed.queueEvent(evt)
 		}
 	}
 }
 
 // Add to the set of users we've noticed, and return true if the user was already known to us.
-func (ec *eventDispatcher) noticeUser(user *User) bool {
+func (ed *eventDispatcher) noticeUser(user *User) bool {
 	if user == nil || user.Key == nil {
 		return true
 	}
-	return ec.userKeys.add(*user.Key)
+	return ed.userKeys.add(*user.Key)
 }
 
-func (ec *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
+func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		if evt.TrackEvents {
@@ -305,7 +306,7 @@ func (ec *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 			// In case the client's time is set wrong, at least we know that any expiration date
 			// earlier than that point is definitely in the past.  If there's any discrepancy, we
 			// want to err on the side of cutting off event debugging sooner.
-			lastPast := atomic.LoadUint64(&ec.lastKnownPastTime)
+			lastPast := atomic.LoadUint64(&ed.lastKnownPastTime)
 			if *evt.DebugEventsUntilDate > lastPast &&
 				*evt.DebugEventsUntilDate > now() {
 				return true
@@ -318,82 +319,82 @@ func (ec *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 	}
 }
 
-func (ec *eventDispatcher) queueEvent(event interface{}) {
-	if len(ec.events) >= ec.config.Capacity {
-		if !ec.capacityExceeded {
-			ec.capacityExceeded = true
-			ec.config.Logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
+func (ed *eventDispatcher) queueEvent(event interface{}) {
+	if len(ed.events) >= ed.config.Capacity {
+		if !ed.capacityExceeded {
+			ed.capacityExceeded = true
+			ed.config.Logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
 		}
 	} else {
-		ec.capacityExceeded = false
-		ec.events = append(ec.events, event)
+		ed.capacityExceeded = false
+		ed.events = append(ed.events, event)
 	}
 }
 
 // Signal that we would like to do a flush as soon as possible.
-func (ec *eventDispatcher) triggerFlush() {
-	if ec.isDisabled() {
+func (ed *eventDispatcher) triggerFlush(flushCh chan *flushPayload) {
+	if ed.isDisabled() {
 		return
 	}
 	// Is there anything to flush?
-	summary := ec.summarizer.snapshot()
-	if len(ec.events) == 0 && len(summary.counters) == 0 {
+	summary := ed.summarizer.snapshot()
+	if len(ed.events) == 0 && len(summary.counters) == 0 {
 		return
 	}
 	payload := flushPayload{
-		events:  ec.events,
+		events:  ed.events,
 		summary: summary,
 	}
-	ec.workersGroup.Add(1) // Increment the count of active flushes
+	ed.workersGroup.Add(1) // Increment the count of active flushes
 	select {
-	case ec.flushCh <- &payload:
+	case flushCh <- &payload:
 		// If the channel wasn't full, then there is a worker available who will pick up
 		// this flush payload and send it. The event buffer and summary state can now be
 		// cleared from the main goroutine.
-		ec.events = make([]interface{}, 0)
-		ec.summarizer.reset()
+		ed.events = make([]interface{}, 0)
+		ed.summarizer.reset()
 	default:
 		// We can't start a flush right now because we're waiting for one of the workers
 		// to pick up the last one.  Do not reset the event buffer or summary state.
-		ec.workersGroup.Done()
+		ed.workersGroup.Done()
 	}
 }
 
 // Runs on a flush worker thread
-func (ec *eventDispatcher) doFlush(payload *flushPayload) {
+func (ed *eventDispatcher) doFlush(payload *flushPayload, client *http.Client) {
 	if len(payload.events) == 0 && len(payload.summary.counters) == 0 {
 		return
 	}
 	outputEvents := make([]interface{}, 0, len(payload.events)+1) // leave room for summary, if any
-	userFilter := newUserFilter(ec.config)
+	userFilter := newUserFilter(ed.config)
 	for _, e := range payload.events {
-		oe := ec.makeOutputEvent(e, &userFilter)
+		oe := ed.makeOutputEvent(e, &userFilter)
 		if oe != nil {
 			outputEvents = append(outputEvents, oe)
 		}
 	}
 	if len(payload.summary.counters) > 0 {
-		outputEvents = append(outputEvents, ec.makeSummaryEvent(payload.summary))
+		outputEvents = append(outputEvents, ed.makeSummaryEvent(payload.summary))
 	}
 
 	jsonPayload, marshalErr := json.Marshal(outputEvents)
 	if marshalErr != nil {
-		ec.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
+		ed.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
 		return
 	}
 
-	eventsUri := ec.config.EventsUri + "/bulk"
+	eventsUri := ed.config.EventsUri + "/bulk"
 	req, reqErr := http.NewRequest("POST", eventsUri, bytes.NewReader(jsonPayload))
 	if reqErr != nil {
-		ec.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
+		ed.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
 		return
 	}
 
-	req.Header.Add("Authorization", ec.sdkKey)
+	req.Header.Add("Authorization", ed.sdkKey)
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("User-Agent", ec.config.UserAgent)
+	req.Header.Add("User-Agent", ed.config.UserAgent)
 
-	resp, respErr := ec.client.Do(req)
+	resp, respErr := client.Do(req)
 
 	defer func() {
 		if resp != nil && resp.Body != nil {
@@ -403,30 +404,30 @@ func (ec *eventDispatcher) doFlush(payload *flushPayload) {
 	}()
 
 	if respErr != nil {
-		ec.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
+		ed.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
 		return
 	}
-	ec.handleResponse(resp)
+	ed.handleResponse(resp)
 }
 
-func (ec *eventDispatcher) handleResponse(resp *http.Response) {
+func (ed *eventDispatcher) handleResponse(resp *http.Response) {
 	err := checkStatusCode(resp.StatusCode, resp.Request.URL.String())
 	if err != nil {
-		ec.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
+		ed.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
 		if err != nil && err.Code == 401 {
-			ec.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
-			atomic.StoreInt32(&ec.disabled, 1)
+			ed.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
+			atomic.StoreInt32(&ed.disabled, 1)
 		}
 	} else {
 		dt, err := http.ParseTime(resp.Header.Get("Date"))
 		if err == nil {
 			tm := toUnixMillis(dt)
-			atomic.StoreUint64(&ec.lastKnownPastTime, tm)
+			atomic.StoreUint64(&ed.lastKnownPastTime, tm)
 		}
 	}
 }
 
-func (ec *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
+func (ed *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		fe := featureRequestEventOutput{
@@ -437,7 +438,7 @@ func (ec *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) inte
 			Version:      evt.Version,
 			PrereqOf:     evt.PrereqOf,
 		}
-		if ec.config.InlineUsersInEvents {
+		if ed.config.InlineUsersInEvents {
 			fe.User = uf.scrubUser(evt.User)
 		} else {
 			fe.UserKey = evt.User.Key
@@ -455,7 +456,7 @@ func (ec *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) inte
 			Key:          evt.Key,
 			Data:         evt.Data,
 		}
-		if ec.config.InlineUsersInEvents {
+		if ed.config.InlineUsersInEvents {
 			ce.User = uf.scrubUser(evt.User)
 		} else {
 			ce.UserKey = evt.User.Key
@@ -472,13 +473,13 @@ func (ec *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) inte
 		evt.User = uf.scrubUser(*evt.User)
 		return evt
 	default:
-		ec.config.Logger.Printf("Found unknown event type in output queue: %T", evt)
+		ed.config.Logger.Printf("Found unknown event type in output queue: %T", evt)
 		return nil
 	}
 }
 
 // Transforms the summary data into the format used for event sending.
-func (ec *eventDispatcher) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
+func (ed *eventDispatcher) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
 	features := make(map[string]flagSummaryData)
 	for key, value := range snapshot.counters {
 		var flagData flagSummaryData
