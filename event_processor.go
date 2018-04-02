@@ -51,6 +51,17 @@ type flushPayload struct {
 	summary eventSummary
 }
 
+type sendEventsTask struct {
+	client           *http.Client
+	eventsUri        string
+	logger           Logger
+	sdkKey           string
+	userAgent        string
+	userFilter       userFilter
+	inlineUsers      bool
+	responseListener func(*http.Response)
+}
+
 // Payload of the inputCh channel.
 type eventDispatcherMessage interface{}
 
@@ -186,7 +197,8 @@ func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 	flushCh := make(chan *flushPayload, 1)
 	var workersGroup sync.WaitGroup
 	for i := 0; i < maxFlushWorkers; i++ {
-		go ed.runFlushWorker(flushCh, client, &workersGroup)
+		startFlushTask(sdkKey, config, client, flushCh, &workersGroup,
+			func(r *http.Response) { ed.handleResponse(r) })
 	}
 	go ed.runMainLoop(inputCh, flushCh, &workersGroup)
 
@@ -245,19 +257,6 @@ func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
 	}
 }
 
-func (ed *eventDispatcher) runFlushWorker(flushCh chan *flushPayload, client *http.Client,
-	workersGroup *sync.WaitGroup) {
-	for {
-		payload, more := <-flushCh
-		if !more {
-			// Channel has been closed - we're shutting down
-			break
-		}
-		ed.doFlush(payload, client)
-		workersGroup.Done() // Decrement the count of in-progress flushes
-	}
-}
-
 func (ed *eventDispatcher) isDisabled() bool {
 	return atomic.LoadInt32(&ed.disabled) != 0
 }
@@ -283,7 +282,7 @@ func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys
 	}
 
 	// Always record the event in the summarizer.
-	buffer.summarizer.summarizeEvent(evt)
+	buffer.addToSummary(evt)
 
 	if ed.shouldTrackFullEvent(evt) {
 		// Sampling interval applies only to fully-tracked events.
@@ -356,56 +355,6 @@ func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flush
 	}
 }
 
-// Runs on a flush worker thread
-func (ed *eventDispatcher) doFlush(payload *flushPayload, client *http.Client) {
-	if len(payload.events) == 0 && len(payload.summary.counters) == 0 {
-		return
-	}
-	outputEvents := make([]interface{}, 0, len(payload.events)+1) // leave room for summary, if any
-	userFilter := newUserFilter(ed.config)
-	for _, e := range payload.events {
-		oe := ed.makeOutputEvent(e, &userFilter)
-		if oe != nil {
-			outputEvents = append(outputEvents, oe)
-		}
-	}
-	if len(payload.summary.counters) > 0 {
-		outputEvents = append(outputEvents, ed.makeSummaryEvent(payload.summary))
-	}
-
-	jsonPayload, marshalErr := json.Marshal(outputEvents)
-	if marshalErr != nil {
-		ed.config.Logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
-		return
-	}
-
-	eventsUri := ed.config.EventsUri + "/bulk"
-	req, reqErr := http.NewRequest("POST", eventsUri, bytes.NewReader(jsonPayload))
-	if reqErr != nil {
-		ed.config.Logger.Printf("Unexpected error while creating event request: %+v", reqErr)
-		return
-	}
-
-	req.Header.Add("Authorization", ed.sdkKey)
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("User-Agent", ed.config.UserAgent)
-
-	resp, respErr := client.Do(req)
-
-	defer func() {
-		if resp != nil && resp.Body != nil {
-			ioutil.ReadAll(resp.Body)
-			resp.Body.Close()
-		}
-	}()
-
-	if respErr != nil {
-		ed.config.Logger.Printf("Unexpected error while sending events: %+v", respErr)
-		return
-	}
-	ed.handleResponse(resp)
-}
-
 func (ed *eventDispatcher) handleResponse(resp *http.Response) {
 	err := checkStatusCode(resp.StatusCode, resp.Request.URL.String())
 	if err != nil {
@@ -423,7 +372,108 @@ func (ed *eventDispatcher) handleResponse(resp *http.Response) {
 	}
 }
 
-func (ed *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) interface{} {
+func (b *eventBuffer) queueEvent(event interface{}) {
+	if len(b.events) >= b.capacity {
+		if !b.capacityExceeded {
+			b.capacityExceeded = true
+			b.logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
+		}
+	} else {
+		b.capacityExceeded = false
+		b.events = append(b.events, event)
+	}
+}
+
+func (b *eventBuffer) addToSummary(event Event) {
+	b.summarizer.summarizeEvent(event)
+}
+
+func (b *eventBuffer) clear() {
+	b.events = make([]interface{}, 0, b.capacity)
+	b.summarizer.reset()
+}
+
+func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh chan *flushPayload,
+	workersGroup *sync.WaitGroup, responseListener func(*http.Response)) {
+	t := sendEventsTask{
+		client:           client,
+		eventsUri:        config.EventsUri + "/bulk",
+		logger:           config.Logger,
+		sdkKey:           sdkKey,
+		userAgent:        config.UserAgent,
+		userFilter:       newUserFilter(config),
+		inlineUsers:      config.InlineUsersInEvents,
+		responseListener: responseListener,
+	}
+	go t.run(flushCh, workersGroup)
+}
+
+func (t *sendEventsTask) run(flushCh chan *flushPayload, workersGroup *sync.WaitGroup) {
+	for {
+		payload, more := <-flushCh
+		if !more {
+			// Channel has been closed - we're shutting down
+			break
+		}
+		outputEvents := t.makeOutputEvents(payload)
+		if len(outputEvents) > 0 {
+			resp := t.postEvents(outputEvents)
+			if resp != nil {
+				t.responseListener(resp)
+			}
+		}
+		workersGroup.Done() // Decrement the count of in-progress flushes
+	}
+}
+
+func (t *sendEventsTask) makeOutputEvents(payload *flushPayload) []interface{} {
+	out := make([]interface{}, 0, len(payload.events)+1) // leave room for summary, if any
+	for _, e := range payload.events {
+		oe := t.makeOutputEvent(e)
+		if oe != nil {
+			out = append(out, oe)
+		}
+	}
+	if len(payload.summary.counters) > 0 {
+		out = append(out, t.makeSummaryEvent(payload.summary))
+	}
+	return out
+}
+
+func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
+	jsonPayload, marshalErr := json.Marshal(outputEvents)
+	if marshalErr != nil {
+		t.logger.Printf("Unexpected error marshalling event json: %+v", marshalErr)
+		return nil
+	}
+
+	req, reqErr := http.NewRequest("POST", t.eventsUri, bytes.NewReader(jsonPayload))
+	if reqErr != nil {
+		t.logger.Printf("Unexpected error while creating event request: %+v", reqErr)
+		return nil
+	}
+
+	req.Header.Add("Authorization", t.sdkKey)
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("User-Agent", t.userAgent)
+
+	resp, respErr := t.client.Do(req)
+
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+		}
+	}()
+
+	if respErr != nil {
+		t.logger.Printf("Unexpected error while sending events: %+v", respErr)
+		return nil
+	}
+	return resp
+}
+
+func (t *sendEventsTask) makeOutputEvent(evt interface{}) interface{} {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		fe := featureRequestEventOutput{
@@ -434,8 +484,8 @@ func (ed *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) inte
 			Version:      evt.Version,
 			PrereqOf:     evt.PrereqOf,
 		}
-		if ed.config.InlineUsersInEvents {
-			fe.User = uf.scrubUser(evt.User)
+		if t.inlineUsers {
+			fe.User = t.userFilter.scrubUser(evt.User)
 		} else {
 			fe.UserKey = evt.User.Key
 		}
@@ -452,8 +502,8 @@ func (ed *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) inte
 			Key:          evt.Key,
 			Data:         evt.Data,
 		}
-		if ed.config.InlineUsersInEvents {
-			ce.User = uf.scrubUser(evt.User)
+		if t.inlineUsers {
+			ce.User = t.userFilter.scrubUser(evt.User)
 		} else {
 			ce.UserKey = evt.User.Key
 		}
@@ -463,19 +513,19 @@ func (ed *eventDispatcher) makeOutputEvent(evt interface{}, uf *userFilter) inte
 			Kind:         IDENTIFY_EVENT,
 			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.User.Key,
-			User:         uf.scrubUser(evt.User),
+			User:         t.userFilter.scrubUser(evt.User),
 		}
 	case indexEventOutput:
-		evt.User = uf.scrubUser(*evt.User)
+		evt.User = t.userFilter.scrubUser(*evt.User)
 		return evt
 	default:
-		ed.config.Logger.Printf("Found unknown event type in output queue: %T", evt)
+		t.logger.Printf("Found unknown event type in output queue: %T", evt)
 		return nil
 	}
 }
 
 // Transforms the summary data into the format used for event sending.
-func (ed *eventDispatcher) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
+func (t *sendEventsTask) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
 	features := make(map[string]flagSummaryData)
 	for key, value := range snapshot.counters {
 		var flagData flagSummaryData
@@ -507,21 +557,4 @@ func (ed *eventDispatcher) makeSummaryEvent(snapshot eventSummary) summaryEventO
 		EndDate:   snapshot.endDate,
 		Features:  features,
 	}
-}
-
-func (b *eventBuffer) queueEvent(event interface{}) {
-	if len(b.events) >= b.capacity {
-		if !b.capacityExceeded {
-			b.capacityExceeded = true
-			b.logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
-		}
-	} else {
-		b.capacityExceeded = false
-		b.events = append(b.events, event)
-	}
-}
-
-func (b *eventBuffer) clear() {
-	b.events = make([]interface{}, 0, b.capacity)
-	b.summarizer.reset()
 }
