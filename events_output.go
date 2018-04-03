@@ -54,13 +54,18 @@ type summaryEventOutput struct {
 }
 
 const (
-	FEATURE_REQUEST_EVENT = "feature"
-	FEATURE_DEBUG_EVENT   = "debug"
-	CUSTOM_EVENT          = "custom"
-	IDENTIFY_EVENT        = "identify"
-	INDEX_EVENT           = "index"
-	SUMMARY_EVENT         = "summary"
+	FeatureRequestEventKind = "feature"
+	FeatureDebugEventKind   = "debug"
+	CustomEventKind         = "custom"
+	IdentifyEventKind       = "identify"
+	IndexEventKind          = "index"
+	SummaryEventKind        = "summary"
 )
+
+type eventOutputFormatter struct {
+	userFilter  userFilter
+	inlineUsers bool
+}
 
 func (ef eventOutputFormatter) makeOutputEvents(events []Event, summary eventSummary) []interface{} {
 	out := make([]interface{}, 0, len(events)+1) // leave room for summary, if any
@@ -93,14 +98,14 @@ func (ef eventOutputFormatter) makeOutputEvent(evt interface{}) interface{} {
 			fe.UserKey = evt.User.Key
 		}
 		if !evt.TrackEvents && evt.DebugEventsUntilDate != nil {
-			fe.Kind = FEATURE_DEBUG_EVENT
+			fe.Kind = FeatureDebugEventKind
 		} else {
-			fe.Kind = FEATURE_REQUEST_EVENT
+			fe.Kind = FeatureRequestEventKind
 		}
 		return fe
 	case CustomEvent:
 		ce := customEventOutput{
-			Kind:         CUSTOM_EVENT,
+			Kind:         CustomEventKind,
 			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.Key,
 			Data:         evt.Data,
@@ -113,14 +118,14 @@ func (ef eventOutputFormatter) makeOutputEvent(evt interface{}) interface{} {
 		return ce
 	case IdentifyEvent:
 		return identifyEventOutput{
-			Kind:         IDENTIFY_EVENT,
+			Kind:         IdentifyEventKind,
 			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.User.Key,
 			User:         ef.userFilter.scrubUser(evt.User),
 		}
 	case IndexEvent:
 		return indexEventOutput{
-			Kind:         INDEX_EVENT,
+			Kind:         IndexEventKind,
 			CreationDate: evt.BaseEvent.CreationDate,
 			User:         ef.userFilter.scrubUser(evt.User),
 		}
@@ -157,7 +162,7 @@ func (ef eventOutputFormatter) makeSummaryEvent(snapshot eventSummary) summaryEv
 	}
 
 	return summaryEventOutput{
-		Kind:      SUMMARY_EVENT,
+		Kind:      SummaryEventKind,
 		StartDate: snapshot.startDate,
 		EndDate:   snapshot.endDate,
 		Features:  features,

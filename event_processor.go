@@ -59,11 +59,6 @@ type sendEventsTask struct {
 	formatter eventOutputFormatter
 }
 
-type eventOutputFormatter struct {
-	userFilter  userFilter
-	inlineUsers bool
-}
-
 // Payload of the inputCh channel.
 type eventDispatcherMessage interface{}
 
