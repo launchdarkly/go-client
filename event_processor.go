@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// Interface for an object that delivers or stores analytics events.
 type EventProcessor interface {
 	// Records an event asynchronously.
 	SendEvent(Event)
@@ -51,7 +52,7 @@ type flushPayload struct {
 
 type sendEventsTask struct {
 	client    *http.Client
-	eventsUri string
+	eventsURI string
 	logger    Logger
 	sdkKey    string
 	userAgent string
@@ -348,7 +349,7 @@ func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh <
 	}
 	t := sendEventsTask{
 		client:    client,
-		eventsUri: config.EventsUri + "/bulk",
+		eventsURI: config.EventsUri + "/bulk",
 		logger:    config.Logger,
 		sdkKey:    sdkKey,
 		userAgent: config.UserAgent,
@@ -383,7 +384,7 @@ func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
 		return nil
 	}
 
-	req, reqErr := http.NewRequest("POST", t.eventsUri, bytes.NewReader(jsonPayload))
+	req, reqErr := http.NewRequest("POST", t.eventsURI, bytes.NewReader(jsonPayload))
 	if reqErr != nil {
 		t.logger.Printf("Unexpected error while creating event request: %+v", reqErr)
 		return nil
