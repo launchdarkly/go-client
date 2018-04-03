@@ -192,7 +192,7 @@ func (ep *defaultEventProcessor) waitUntilInactive() {
 }
 
 func startEventDispatcher(sdkKey string, config Config, client *http.Client,
-	inputCh chan eventDispatcherMessage) {
+	inputCh <-chan eventDispatcherMessage) {
 	ed := &eventDispatcher{
 		sdkKey: sdkKey,
 		config: config,
@@ -209,8 +209,8 @@ func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 	go ed.runMainLoop(inputCh, flushCh, &workersGroup)
 }
 
-func (ed *eventDispatcher) runMainLoop(inputCh chan eventDispatcherMessage,
-	flushCh chan *flushPayload, workersGroup *sync.WaitGroup) {
+func (ed *eventDispatcher) runMainLoop(inputCh <-chan eventDispatcherMessage,
+	flushCh chan<- *flushPayload, workersGroup *sync.WaitGroup) {
 	if err := recover(); err != nil {
 		ed.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 	}
@@ -334,7 +334,7 @@ func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 }
 
 // Signal that we would like to do a flush as soon as possible.
-func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flushPayload,
+func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan<- *flushPayload,
 	workersGroup *sync.WaitGroup) {
 	if ed.isDisabled() {
 		return
@@ -405,7 +405,7 @@ func (b *eventBuffer) clear() {
 	b.summarizer.reset()
 }
 
-func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh chan *flushPayload,
+func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh <-chan *flushPayload,
 	workersGroup *sync.WaitGroup, responseListener func(*http.Response)) {
 	ef := eventOutputFormatter{
 		userFilter:  newUserFilter(config),
@@ -423,7 +423,7 @@ func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh c
 	go t.run(flushCh, workersGroup)
 }
 
-func (t *sendEventsTask) run(flushCh chan *flushPayload, workersGroup *sync.WaitGroup) {
+func (t *sendEventsTask) run(flushCh <-chan *flushPayload, workersGroup *sync.WaitGroup) {
 	for {
 		payload, more := <-flushCh
 		if !more {
