@@ -34,6 +34,7 @@ type eventDispatcher struct {
 	sdkKey            string
 	config            Config
 	lastKnownPastTime uint64
+	lastPastTimeLock  sync.Mutex
 	disabled          int32 // Really a bool, but there's no atomic bool
 }
 
@@ -316,8 +317,11 @@ func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 			// In case the client's time is set wrong, at least we know that any expiration date
 			// earlier than that point is definitely in the past.  If there's any discrepancy, we
 			// want to err on the side of cutting off event debugging sooner.
-			lastPast := atomic.LoadUint64(&ed.lastKnownPastTime)
-			if *evt.DebugEventsUntilDate > lastPast &&
+			ed.lastPastTimeLock.Lock()
+			defer ed.lastPastTimeLock.Unlock()
+			// Note, the mutex is necessary because lastKnownPastTime gets updated from the flush
+			// worker goroutines. But we don't expect to hit this code path often.
+			if *evt.DebugEventsUntilDate > ed.lastKnownPastTime &&
 				*evt.DebugEventsUntilDate > now() {
 				return true
 			}
@@ -366,7 +370,9 @@ func (ed *eventDispatcher) handleResponse(resp *http.Response) {
 		dt, err := http.ParseTime(resp.Header.Get("Date"))
 		if err == nil {
 			tm := toUnixMillis(dt)
-			atomic.StoreUint64(&ed.lastKnownPastTime, tm)
+			ed.lastPastTimeLock.Lock()
+			defer ed.lastPastTimeLock.Unlock()
+			ed.lastKnownPastTime = tm
 		}
 	}
 }
