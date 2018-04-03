@@ -336,13 +336,9 @@ func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan *flush
 		return
 	}
 	// Is there anything to flush?
-	summary := buffer.summarizer.snapshot()
-	if len(buffer.events) == 0 && len(summary.counters) == 0 {
+	payload := buffer.getPayload()
+	if len(payload.events) == 0 && len(payload.summary.counters) == 0 {
 		return
-	}
-	payload := flushPayload{
-		events:  buffer.events,
-		summary: summary,
 	}
 	workersGroup.Add(1) // Increment the count of active flushes
 	select {
@@ -389,6 +385,13 @@ func (b *eventBuffer) queueEvent(event interface{}) {
 
 func (b *eventBuffer) addToSummary(event Event) {
 	b.summarizer.summarizeEvent(event)
+}
+
+func (b *eventBuffer) getPayload() flushPayload {
+	return flushPayload{
+		events:  b.events,
+		summary: b.summarizer.snapshot(),
+	}
 }
 
 func (b *eventBuffer) clear() {
