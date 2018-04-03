@@ -56,9 +56,13 @@ type sendEventsTask struct {
 	logger           Logger
 	sdkKey           string
 	userAgent        string
-	userFilter       userFilter
-	inlineUsers      bool
+	formatter        eventOutputFormatter
 	responseListener func(*http.Response)
+}
+
+type eventOutputFormatter struct {
+	userFilter  userFilter
+	inlineUsers bool
 }
 
 // Payload of the inputCh channel.
@@ -394,14 +398,17 @@ func (b *eventBuffer) clear() {
 
 func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh chan *flushPayload,
 	workersGroup *sync.WaitGroup, responseListener func(*http.Response)) {
+	ef := eventOutputFormatter{
+		userFilter:  newUserFilter(config),
+		inlineUsers: config.InlineUsersInEvents,
+	}
 	t := sendEventsTask{
 		client:           client,
 		eventsUri:        config.EventsUri + "/bulk",
 		logger:           config.Logger,
 		sdkKey:           sdkKey,
 		userAgent:        config.UserAgent,
-		userFilter:       newUserFilter(config),
-		inlineUsers:      config.InlineUsersInEvents,
+		formatter:        ef,
 		responseListener: responseListener,
 	}
 	go t.run(flushCh, workersGroup)
@@ -414,7 +421,7 @@ func (t *sendEventsTask) run(flushCh chan *flushPayload, workersGroup *sync.Wait
 			// Channel has been closed - we're shutting down
 			break
 		}
-		outputEvents := t.makeOutputEvents(payload)
+		outputEvents := t.formatter.makeOutputEvents(payload)
 		if len(outputEvents) > 0 {
 			resp := t.postEvents(outputEvents)
 			if resp != nil {
@@ -423,20 +430,6 @@ func (t *sendEventsTask) run(flushCh chan *flushPayload, workersGroup *sync.Wait
 		}
 		workersGroup.Done() // Decrement the count of in-progress flushes
 	}
-}
-
-func (t *sendEventsTask) makeOutputEvents(payload *flushPayload) []interface{} {
-	out := make([]interface{}, 0, len(payload.events)+1) // leave room for summary, if any
-	for _, e := range payload.events {
-		oe := t.makeOutputEvent(e)
-		if oe != nil {
-			out = append(out, oe)
-		}
-	}
-	if len(payload.summary.counters) > 0 {
-		out = append(out, t.makeSummaryEvent(payload.summary))
-	}
-	return out
 }
 
 func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
@@ -472,7 +465,21 @@ func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
 	return resp
 }
 
-func (t *sendEventsTask) makeOutputEvent(evt interface{}) interface{} {
+func (ef eventOutputFormatter) makeOutputEvents(payload *flushPayload) []interface{} {
+	out := make([]interface{}, 0, len(payload.events)+1) // leave room for summary, if any
+	for _, e := range payload.events {
+		oe := ef.makeOutputEvent(e)
+		if oe != nil {
+			out = append(out, oe)
+		}
+	}
+	if len(payload.summary.counters) > 0 {
+		out = append(out, ef.makeSummaryEvent(payload.summary))
+	}
+	return out
+}
+
+func (ef eventOutputFormatter) makeOutputEvent(evt interface{}) interface{} {
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
 		fe := featureRequestEventOutput{
@@ -483,8 +490,8 @@ func (t *sendEventsTask) makeOutputEvent(evt interface{}) interface{} {
 			Version:      evt.Version,
 			PrereqOf:     evt.PrereqOf,
 		}
-		if t.inlineUsers {
-			fe.User = t.userFilter.scrubUser(evt.User)
+		if ef.inlineUsers {
+			fe.User = ef.userFilter.scrubUser(evt.User)
 		} else {
 			fe.UserKey = evt.User.Key
 		}
@@ -501,8 +508,8 @@ func (t *sendEventsTask) makeOutputEvent(evt interface{}) interface{} {
 			Key:          evt.Key,
 			Data:         evt.Data,
 		}
-		if t.inlineUsers {
-			ce.User = t.userFilter.scrubUser(evt.User)
+		if ef.inlineUsers {
+			ce.User = ef.userFilter.scrubUser(evt.User)
 		} else {
 			ce.UserKey = evt.User.Key
 		}
@@ -512,19 +519,18 @@ func (t *sendEventsTask) makeOutputEvent(evt interface{}) interface{} {
 			Kind:         IDENTIFY_EVENT,
 			CreationDate: evt.BaseEvent.CreationDate,
 			Key:          evt.User.Key,
-			User:         t.userFilter.scrubUser(evt.User),
+			User:         ef.userFilter.scrubUser(evt.User),
 		}
 	case indexEventOutput:
-		evt.User = t.userFilter.scrubUser(*evt.User)
+		evt.User = ef.userFilter.scrubUser(*evt.User)
 		return evt
 	default:
-		t.logger.Printf("Found unknown event type in output queue: %T", evt)
 		return nil
 	}
 }
 
 // Transforms the summary data into the format used for event sending.
-func (t *sendEventsTask) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
+func (ef eventOutputFormatter) makeSummaryEvent(snapshot eventSummary) summaryEventOutput {
 	features := make(map[string]flagSummaryData)
 	for key, value := range snapshot.counters {
 		var flagData flagSummaryData
