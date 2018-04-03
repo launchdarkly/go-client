@@ -35,6 +35,7 @@ type eventDispatcher struct {
 	config            Config
 	lastKnownPastTime uint64
 	disabled          bool
+	stateLock         sync.Mutex
 }
 
 type eventBuffer struct {
@@ -138,16 +139,16 @@ func startEventDispatcher(sdkKey string, config Config, client *http.Client,
 	// Start a fixed-size pool of workers that wait on flushTriggerCh. This is the
 	// maximum number of flushes we can do concurrently.
 	flushCh := make(chan *flushPayload, 1)
-	responseCh := make(chan *http.Response, maxFlushWorkers)
 	var workersGroup sync.WaitGroup
 	for i := 0; i < maxFlushWorkers; i++ {
-		startFlushTask(sdkKey, config, client, flushCh, &workersGroup, responseCh)
+		startFlushTask(sdkKey, config, client, flushCh, &workersGroup,
+			func(r *http.Response) { ed.handleResponse(r) })
 	}
-	go ed.runMainLoop(inputCh, flushCh, responseCh, &workersGroup)
+	go ed.runMainLoop(inputCh, flushCh, &workersGroup)
 }
 
 func (ed *eventDispatcher) runMainLoop(inputCh <-chan eventDispatcherMessage,
-	flushCh chan<- *flushPayload, responseCh <-chan *http.Response, workersGroup *sync.WaitGroup) {
+	flushCh chan<- *flushPayload, workersGroup *sync.WaitGroup) {
 	if err := recover(); err != nil {
 		ed.config.Logger.Printf("Unexpected panic in event processing thread: %+v", err)
 	}
@@ -172,43 +173,35 @@ func (ed *eventDispatcher) runMainLoop(inputCh <-chan eventDispatcherMessage,
 	usersResetTicker := time.NewTicker(userKeysFlushInterval)
 
 	for {
-		select {
 		// Drain the response channel with a higher priority than anything else
 		// to ensure that the flush workers don't get blocked.
-		case resp := <-responseCh:
-			ed.handleResponse(resp)
-		default:
-			select {
-			case message := <-inputCh:
-				switch m := message.(type) {
-				case sendEventMessage:
-					ed.processEvent(m.event, &buffer, &userKeys)
-				case flushEventsMessage:
-					ed.triggerFlush(&buffer, flushCh, workersGroup)
-				case syncEventsMessage:
-					workersGroup.Wait()
-					m.replyCh <- struct{}{}
-				case shutdownEventsMessage:
-					flushTicker.Stop()
-					usersResetTicker.Stop()
-					workersGroup.Wait() // Wait for all in-progress flushes to complete
-					close(flushCh)      // Causes all idle flush workers to terminate
-					m.replyCh <- struct{}{}
-					return
-				}
-			case <-flushTicker.C:
+		select {
+		case message := <-inputCh:
+			switch m := message.(type) {
+			case sendEventMessage:
+				ed.processEvent(m.event, &buffer, &userKeys)
+			case flushEventsMessage:
 				ed.triggerFlush(&buffer, flushCh, workersGroup)
-			case <-usersResetTicker.C:
-				userKeys.clear()
+			case syncEventsMessage:
+				workersGroup.Wait()
+				m.replyCh <- struct{}{}
+			case shutdownEventsMessage:
+				flushTicker.Stop()
+				usersResetTicker.Stop()
+				workersGroup.Wait() // Wait for all in-progress flushes to complete
+				close(flushCh)      // Causes all idle flush workers to terminate
+				m.replyCh <- struct{}{}
+				return
 			}
+		case <-flushTicker.C:
+			ed.triggerFlush(&buffer, flushCh, workersGroup)
+		case <-usersResetTicker.C:
+			userKeys.clear()
 		}
 	}
 }
 
 func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys *lruCache) {
-	if ed.disabled {
-		return
-	}
 	// For each user we haven't seen before, we add an index event - unless this is already
 	// an identify event for that user.
 	if !ed.config.InlineUsersInEvents {
@@ -255,6 +248,8 @@ func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 			// In case the client's time is set wrong, at least we know that any expiration date
 			// earlier than that point is definitely in the past.  If there's any discrepancy, we
 			// want to err on the side of cutting off event debugging sooner.
+			ed.stateLock.Lock() // This should be done infrequently since it's only for debug events
+			defer ed.stateLock.Unlock()
 			if *evt.DebugEventsUntilDate > ed.lastKnownPastTime &&
 				*evt.DebugEventsUntilDate > now() {
 				return true
@@ -270,7 +265,8 @@ func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
 // Signal that we would like to do a flush as soon as possible.
 func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan<- *flushPayload,
 	workersGroup *sync.WaitGroup) {
-	if ed.disabled {
+	if ed.isDisabled() {
+		buffer.clear()
 		return
 	}
 	// Is there anything to flush?
@@ -292,17 +288,28 @@ func (ed *eventDispatcher) triggerFlush(buffer *eventBuffer, flushCh chan<- *flu
 	}
 }
 
+func (ed *eventDispatcher) isDisabled() bool {
+	// Since we're using a mutex, we should avoid calling this often.
+	ed.stateLock.Lock()
+	defer ed.stateLock.Unlock()
+	return ed.disabled
+}
+
 func (ed *eventDispatcher) handleResponse(resp *http.Response) {
 	err := checkStatusCode(resp.StatusCode, resp.Request.URL.String())
 	if err != nil {
 		ed.config.Logger.Printf("Unexpected status code when sending events: %+v", err)
 		if err != nil && err.Code == 401 {
 			ed.config.Logger.Printf("Received 401 error, no further events will be posted since SDK key is invalid")
+			ed.stateLock.Lock()
+			defer ed.stateLock.Unlock()
 			ed.disabled = true
 		}
 	} else {
 		dt, err := http.ParseTime(resp.Header.Get("Date"))
 		if err == nil {
+			ed.stateLock.Lock()
+			defer ed.stateLock.Unlock()
 			ed.lastKnownPastTime = toUnixMillis(dt)
 		}
 	}
@@ -337,7 +344,7 @@ func (b *eventBuffer) clear() {
 }
 
 func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh <-chan *flushPayload,
-	workersGroup *sync.WaitGroup, responseCh chan<- *http.Response) {
+	workersGroup *sync.WaitGroup, responseFn func(*http.Response)) {
 	ef := eventOutputFormatter{
 		userFilter:  newUserFilter(config),
 		inlineUsers: config.InlineUsersInEvents,
@@ -350,10 +357,10 @@ func startFlushTask(sdkKey string, config Config, client *http.Client, flushCh <
 		userAgent: config.UserAgent,
 		formatter: ef,
 	}
-	go t.run(flushCh, responseCh, workersGroup)
+	go t.run(flushCh, responseFn, workersGroup)
 }
 
-func (t *sendEventsTask) run(flushCh <-chan *flushPayload, responseCh chan<- *http.Response,
+func (t *sendEventsTask) run(flushCh <-chan *flushPayload, responseFn func(*http.Response),
 	workersGroup *sync.WaitGroup) {
 	for {
 		payload, more := <-flushCh
@@ -365,7 +372,7 @@ func (t *sendEventsTask) run(flushCh <-chan *flushPayload, responseCh chan<- *ht
 		if len(outputEvents) > 0 {
 			resp := t.postEvents(outputEvents)
 			if resp != nil {
-				responseCh <- resp
+				responseFn(resp)
 			}
 		}
 		workersGroup.Done() // Decrement the count of in-progress flushes
