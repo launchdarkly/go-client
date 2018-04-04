@@ -38,8 +38,8 @@ type flagCounterData struct {
 	Unknown *bool       `json:"unknown,omitempty"`
 }
 
-func newEventSummarizer() *eventSummarizer {
-	return &eventSummarizer{eventsState: newEventSummary()}
+func newEventSummarizer() eventSummarizer {
+	return eventSummarizer{eventsState: newEventSummary()}
 }
 
 func newEventSummary() eventSummary {
