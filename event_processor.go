@@ -211,7 +211,7 @@ func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys
 				indexEvent := IndexEvent{
 					BaseEvent{CreationDate: evt.GetBase().CreationDate, User: user},
 				}
-				buffer.queueEvent(indexEvent)
+				buffer.addEvent(indexEvent)
 			}
 		}
 	}
@@ -224,7 +224,7 @@ func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys
 		if ed.config.SamplingInterval == 0 || rand.Int31n(ed.config.SamplingInterval) == 0 {
 			// Queue the event as-is; we'll transform it into an output event when we're flushing
 			// (to avoid doing that work on our main goroutine).
-			buffer.queueEvent(evt)
+			buffer.addEvent(evt)
 		}
 	}
 }
@@ -315,16 +315,16 @@ func (ed *eventDispatcher) handleResponse(resp *http.Response) {
 	}
 }
 
-func (b *eventBuffer) queueEvent(event Event) {
+func (b *eventBuffer) addEvent(event Event) {
 	if len(b.events) >= b.capacity {
 		if !b.capacityExceeded {
 			b.capacityExceeded = true
 			b.logger.Printf("WARN: Exceeded event queue capacity. Increase capacity to avoid dropping events.")
 		}
-	} else {
-		b.capacityExceeded = false
-		b.events = append(b.events, event)
+		return
 	}
+	b.capacityExceeded = false
+	b.events = append(b.events, event)
 }
 
 func (b *eventBuffer) addToSummary(event Event) {
