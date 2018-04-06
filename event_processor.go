@@ -93,7 +93,7 @@ func (n *nullEventProcessor) Close() error {
 	return nil
 }
 
-func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
+func NewDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
 	if client == nil {
 		client = &http.Client{}
 	}

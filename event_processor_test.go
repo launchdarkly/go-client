@@ -519,7 +519,7 @@ func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport
 	client := &http.Client{
 		Transport: transport,
 	}
-	return newDefaultEventProcessor(sdkKey, config, client), transport
+	return NewDefaultEventProcessor(sdkKey, config, client), transport
 }
 
 func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) []map[string]interface{} {
