@@ -175,7 +175,7 @@ func TestEvaluatingExistingFlagSendsEvent(t *testing.T) {
 		Key:       flag.Key,
 		Version:   &flag.Version,
 		Value:     "b",
-		Variation: intPtr(1),
+		Variation: 1,
 		Default:   "x",
 		PrereqOf:  nil,
 	}
@@ -237,7 +237,7 @@ func TestEvaluatingFlagWithPrerequisiteSendsPrerequisiteEvent(t *testing.T) {
 		Key:       flag1.Key,
 		Version:   &flag1.Version,
 		Value:     "d",
-		Variation: intPtr(1),
+		Variation: 1,
 		Default:   nil,
 		PrereqOf:  &flag0.Key,
 	}
@@ -252,7 +252,7 @@ func TestEvaluatingFlagWithPrerequisiteSendsPrerequisiteEvent(t *testing.T) {
 		Key:       flag0.Key,
 		Version:   &flag0.Version,
 		Value:     "b",
-		Variation: intPtr(1),
+		Variation: 1,
 		Default:   "x",
 		PrereqOf:  nil,
 	}

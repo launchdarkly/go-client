@@ -21,7 +21,7 @@ type BaseEvent struct {
 type FeatureRequestEvent struct {
 	BaseEvent
 	Key                  string
-	Variation            *int
+	Variation            interface{} // always an int or nil in normal use; can be other types in ld-relay
 	Value                interface{}
 	Default              interface{}
 	Version              *int
@@ -55,16 +55,18 @@ func NewFeatureRequestEvent(key string, flag *FeatureFlag, user User, variation 
 			CreationDate: now(),
 			User:         user,
 		},
-		Key:       key,
-		Variation: variation,
-		Value:     value,
-		Default:   defaultVal,
-		PrereqOf:  prereqOf,
+		Key:      key,
+		Value:    value,
+		Default:  defaultVal,
+		PrereqOf: prereqOf,
 	}
 	if flag != nil {
 		fre.Version = &flag.Version
 		fre.TrackEvents = flag.TrackEvents
 		fre.DebugEventsUntilDate = flag.DebugEventsUntilDate
+	}
+	if variation != nil {
+		fre.Variation = *variation
 	}
 	return fre
 }

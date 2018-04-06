@@ -76,7 +76,7 @@ func TestSummarizeEventIncrementsCounters(t *testing.T) {
 		counterKey{flag1.Key, variation1, flag1.Version}: &counterValue{2, "value1", "default1"},
 		counterKey{flag1.Key, variation2, flag1.Version}: &counterValue{1, "value2", "default1"},
 		counterKey{flag2.Key, variation1, flag2.Version}: &counterValue{1, "value99", "default2"},
-		counterKey{unknownFlagKey, 0, 0}:                 &counterValue{1, "default3", "default3"},
+		counterKey{unknownFlagKey, nil, 0}:               &counterValue{1, "default3", "default3"},
 	}
 	assert.Equal(t, expectedCounters, data.counters)
 }
