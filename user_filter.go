@@ -13,11 +13,11 @@ func newUserFilter(config Config) userFilter {
 }
 
 func (uf userFilter) scrubUser(user User) *User {
-	user.PrivateAttributes = nil
-
 	if len(user.PrivateAttributeNames) == 0 && len(uf.globalPrivateAttributes) == 0 && !uf.allAttributesPrivate {
 		return &user
 	}
+
+	user.PrivateAttributes = nil
 
 	isPrivate := map[string]bool{}
 	for _, n := range uf.globalPrivateAttributes {
