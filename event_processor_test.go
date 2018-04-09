@@ -276,7 +276,7 @@ func TestDebugModeExpiresBasedOnClientTimeIfClienttTimeIsLater(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Flush()
 	ep.waitUntilInactive()
-	getLastRequest(st)
+	st.getNextRequest()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the server time, but in the past compared to the client.
@@ -311,7 +311,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Flush()
 	ep.waitUntilInactive()
-	getLastRequest(st)
+	st.getNextRequest()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the client time, but in the past compared to the server.
@@ -457,7 +457,7 @@ func TestClosingEventProcessorForcesSynchronousFlush(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Close()
 
-	output := getEventsFromLastRequest(st)
+	output := getEventsFromRequest(st)
 	if assert.Equal(t, 1, len(output)) {
 		assertIdentifyEventMatches(t, ie, userJson, output[0])
 	}
@@ -470,7 +470,7 @@ func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	msg := getLastRequest(st)
+	msg := st.getNextRequest()
 	assert.Nil(t, msg)
 }
 
@@ -483,7 +483,7 @@ func TestSdkKeyIsSent(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	msg := getLastRequest(st)
+	msg := st.getNextRequest()
 	assert.Equal(t, sdkKey, msg.Header.Get("Authorization"))
 }
 
@@ -498,7 +498,7 @@ func TestUserAgentIsSent(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	msg := getLastRequest(st)
+	msg := st.getNextRequest()
 	assert.Equal(t, config.UserAgent, msg.Header.Get("User-Agent"))
 }
 
@@ -585,20 +585,11 @@ func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport
 func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) []map[string]interface{} {
 	ep.Flush()
 	ep.waitUntilInactive()
-	return getEventsFromLastRequest(st)
+	return getEventsFromRequest(st)
 }
 
-func getLastRequest(st *stubTransport) *http.Request {
-	select {
-	case msg := <-st.messageSent:
-		return msg
-	default:
-		return nil
-	}
-}
-
-func getEventsFromLastRequest(st *stubTransport) (output []map[string]interface{}) {
-	msg := getLastRequest(st)
+func getEventsFromRequest(st *stubTransport) (output []map[string]interface{}) {
+	msg := st.getNextRequest()
 	if msg == nil {
 		return
 	}
@@ -625,4 +616,13 @@ func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		resp.Header.Add("Date", ts.Format(http.TimeFormat))
 	}
 	return &resp, nil
+}
+
+func (t *stubTransport) getNextRequest() *http.Request {
+	select {
+	case msg := <-t.messageSent:
+		return msg
+	default:
+		return nil
+	}
 }
