@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Interface for an object that delivers or stores analytics events.
+// EventProcessor defines the interface for dispatching analytics events.
 type EventProcessor interface {
 	// Records an event asynchronously.
 	SendEvent(Event)
@@ -95,6 +95,9 @@ func (n *nullEventProcessor) Close() error {
 	return nil
 }
 
+// NewDefaultEventProcessor creates an instance of the default implementation of analytics event processing.
+// This is normally only used internally; it is public because the Go SDK code is reused by other LaunchDarkly
+// components.
 func NewDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
 	if client == nil {
 		client = &http.Client{}
