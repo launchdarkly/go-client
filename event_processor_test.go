@@ -190,6 +190,27 @@ func TestUserDetailsAreScrubbedInFeatureEvent(t *testing.T) {
 	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
 }
 
+func TestIndexEventIsGeneratedForNonTrackedFeatureEventEvenIfInliningIsOn(t *testing.T) {
+	config := epDefaultConfig
+	config.InlineUsersInEvents = true
+	ep, st := createEventProcessor(config)
+	defer ep.Close()
+
+	flag := FeatureFlag{
+		Key:         "flagkey",
+		Version:     11,
+		TrackEvents: false,
+	}
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
+	ep.SendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 2, len(output))
+	assertIndexEventMatches(t, fe, userJson, output[0]) // we get this because we are *not* getting the full event
+	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+}
+
 func TestDebugEventIsAddedIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.Close()

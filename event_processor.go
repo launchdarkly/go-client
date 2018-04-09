@@ -202,9 +202,30 @@ func (ed *eventDispatcher) runMainLoop(inputCh <-chan eventDispatcherMessage,
 }
 
 func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys *lruCache) {
+
+	// Always record the event in the summarizer.
+	buffer.addToSummary(evt)
+
+	// Decide whether to add the event to the payload. Feature events may be added twice, once for
+	// the event (if tracked) and once for debugging.
+	var willAddFullEvent bool
+	var debugEvent Event
+	switch evt := evt.(type) {
+	case FeatureRequestEvent:
+		willAddFullEvent = evt.TrackEvents && ed.shouldSampleEvent()
+		if ed.shouldDebugEvent(&evt) {
+			de := evt
+			de.Debug = true
+			debugEvent = de
+		}
+	default:
+		willAddFullEvent = ed.shouldSampleEvent()
+	}
+
 	// For each user we haven't seen before, we add an index event - unless this is already
-	// an identify event for that user.
-	if !ed.config.InlineUsersInEvents {
+	// an identify event for that user. This should be added before the event that referenced
+	// the user, and can be omitted if that event will contain an inline user.
+	if !(willAddFullEvent && ed.config.InlineUsersInEvents) {
 		user := evt.GetBase().User
 		if !noticeUser(userKeys, &user) {
 			if _, ok := evt.(IdentifyEvent); !ok {
@@ -215,25 +236,11 @@ func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys
 			}
 		}
 	}
-
-	// Always record the event in the summarizer.
-	buffer.addToSummary(evt)
-
-	// Conditionally add the event to the payload. Feature events may be added twice, once for
-	// the event (if tracked) and once for debugging.
-	switch evt := evt.(type) {
-	case FeatureRequestEvent:
-		if evt.TrackEvents && ed.shouldSampleEvent() {
-			buffer.addEvent(evt)
-		}
-		if ed.shouldDebugEvent(&evt) {
-			evt.Debug = true
-			buffer.addEvent(evt)
-		}
-	default:
-		if ed.shouldSampleEvent() {
-			buffer.addEvent(evt)
-		}
+	if willAddFullEvent {
+		buffer.addEvent(evt)
+	}
+	if debugEvent != nil {
+		buffer.addEvent(debugEvent)
 	}
 }
 
@@ -396,6 +403,7 @@ func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
 	req.Header.Add("Authorization", t.sdkKey)
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("User-Agent", t.userAgent)
+	req.Header.Add("X-LaunchDarkly-Event-Schema", "3")
 
 	resp, respErr := t.client.Do(req)
 
