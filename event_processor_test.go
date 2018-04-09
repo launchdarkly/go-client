@@ -92,9 +92,8 @@ func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
 		Key:     "flagkey",
 		Version: 11,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
@@ -113,9 +112,8 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 		Version:     11,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
@@ -137,9 +135,8 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 		Version:     11,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
@@ -161,9 +158,8 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 		Version:     11,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
@@ -184,9 +180,8 @@ func TestUserDetailsAreScrubbedInFeatureEvent(t *testing.T) {
 		Version:     11,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
@@ -206,9 +201,8 @@ func TestDebugEventIsAddedIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 		TrackEvents:          false,
 		DebugEventsUntilDate: &futureTime,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
@@ -229,9 +223,8 @@ func TestEventCanBeBothTrackedAndDebugged(t *testing.T) {
 		TrackEvents:          true,
 		DebugEventsUntilDate: &futureTime,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
@@ -324,10 +317,9 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 		Version:     22,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, &variation, value, nil, nil)
-	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
+	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, intPtr(1), value, nil, nil)
+	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe1)
 	ep.SendEvent(fe2)
 
@@ -355,11 +347,10 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 		Version:     22,
 		TrackEvents: false,
 	}
-	variation := 1
 	value := "value"
-	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, &variation, value, nil, nil)
-	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
-	fe3 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
+	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, intPtr(1), value, nil, nil)
+	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, intPtr(1), value, nil, nil)
+	fe3 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe1)
 	ep.SendEvent(fe2)
 	ep.SendEvent(fe3)
