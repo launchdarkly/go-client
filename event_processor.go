@@ -208,15 +208,17 @@ func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys
 
 	// Decide whether to add the event to the payload. Feature events may be added twice, once for
 	// the event (if tracked) and once for debugging.
-	var willAddFullEvent bool
+	willAddFullEvent := false
 	var debugEvent Event
 	switch evt := evt.(type) {
 	case FeatureRequestEvent:
-		willAddFullEvent = evt.TrackEvents && ed.shouldSampleEvent()
-		if ed.shouldDebugEvent(&evt) {
-			de := evt
-			de.Debug = true
-			debugEvent = de
+		if ed.shouldSampleEvent() {
+			willAddFullEvent = evt.TrackEvents
+			if ed.shouldDebugEvent(&evt) {
+				de := evt
+				de.Debug = true
+				debugEvent = de
+			}
 		}
 	default:
 		willAddFullEvent = ed.shouldSampleEvent()
