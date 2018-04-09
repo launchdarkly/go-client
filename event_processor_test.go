@@ -46,7 +46,7 @@ const (
 )
 
 type stubTransport struct {
-	messageSent *http.Request
+	messageSent chan *http.Request
 	statusCode  int
 	serverTime  uint64
 	error       error
@@ -66,8 +66,9 @@ func TestIdentifyEventIsQueued(t *testing.T) {
 	ep.SendEvent(ie)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 1, len(output))
-	assertIdentifyEventMatches(t, ie, userJson, output[0])
+	if assert.Equal(t, 1, len(output)) {
+		assertIdentifyEventMatches(t, ie, userJson, output[0])
+	}
 }
 
 func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
@@ -80,8 +81,9 @@ func TestUserDetailsAreScrubbedInIdentifyEvent(t *testing.T) {
 	ep.SendEvent(ie)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 1, len(output))
-	assertIdentifyEventMatches(t, ie, filteredUserJson, output[0])
+	if assert.Equal(t, 1, len(output)) {
+		assertIdentifyEventMatches(t, ie, filteredUserJson, output[0])
+	}
 }
 
 func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
@@ -92,17 +94,15 @@ func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
 		Key:     "flagkey",
 		Version: 11,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 2, len(output))
-
-	assertIndexEventMatches(t, fe, userJson, output[0])
-
-	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+	if assert.Equal(t, 2, len(output)) {
+		assertIndexEventMatches(t, fe, userJson, output[0])
+		assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+	}
 }
 
 func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
@@ -114,19 +114,16 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 		Version:     11,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 3, len(output))
-
-	assertIndexEventMatches(t, fe, userJson, output[0])
-
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, false, output[1])
-
-	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+	if assert.Equal(t, 3, len(output)) {
+		assertIndexEventMatches(t, fe, userJson, output[0])
+		assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
+		assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+	}
 }
 
 func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
@@ -140,19 +137,16 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 		Version:     11,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 3, len(output))
-
-	assertIndexEventMatches(t, fe, filteredUserJson, output[0])
-
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, false, output[1])
-
-	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+	if assert.Equal(t, 3, len(output)) {
+		assertIndexEventMatches(t, fe, filteredUserJson, output[0])
+		assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
+		assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+	}
 }
 
 func TestFeatureEventCanContainInlineUser(t *testing.T) {
@@ -166,20 +160,63 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 		Version:     11,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 2, len(output))
-
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, true, output[0])
-
-	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+	if assert.Equal(t, 2, len(output)) {
+		assertFeatureEventMatches(t, fe, flag, value, false, &userJson, output[0])
+		assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+	}
 }
 
-func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
+func TestUserDetailsAreScrubbedInFeatureEvent(t *testing.T) {
+	config := epDefaultConfig
+	config.InlineUsersInEvents = true
+	config.AllAttributesPrivate = true
+	ep, st := createEventProcessor(config)
+	defer ep.Close()
+
+	flag := FeatureFlag{
+		Key:         "flagkey",
+		Version:     11,
+		TrackEvents: true,
+	}
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
+	ep.SendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	if assert.Equal(t, 2, len(output)) {
+		assertFeatureEventMatches(t, fe, flag, value, false, &filteredUserJson, output[0])
+		assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+	}
+}
+
+func TestIndexEventIsGeneratedForNonTrackedFeatureEventEvenIfInliningIsOn(t *testing.T) {
+	config := epDefaultConfig
+	config.InlineUsersInEvents = true
+	ep, st := createEventProcessor(config)
+	defer ep.Close()
+
+	flag := FeatureFlag{
+		Key:         "flagkey",
+		Version:     11,
+		TrackEvents: false,
+	}
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
+	ep.SendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	if assert.Equal(t, 2, len(output)) {
+		assertIndexEventMatches(t, fe, userJson, output[0]) // we get this because we are *not* getting the full event
+		assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+	}
+}
+
+func TestDebugEventIsAddedIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.Close()
 
@@ -190,22 +227,43 @@ func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 		TrackEvents:          false,
 		DebugEventsUntilDate: &futureTime,
 	}
-	variation := 1
 	value := "value"
-	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 3, len(output))
-
-	assertIndexEventMatches(t, fe, userJson, output[0])
-
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, true, false, output[1])
-
-	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+	if assert.Equal(t, 3, len(output)) {
+		assertIndexEventMatches(t, fe, userJson, output[0])
+		assertFeatureEventMatches(t, fe, flag, value, true, &userJson, output[1])
+		assertSummaryEventHasCounter(t, flag, value, 1, output[2])
+	}
 }
 
-func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
+func TestEventCanBeBothTrackedAndDebugged(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.Close()
+
+	futureTime := now() + 1000000
+	flag := FeatureFlag{
+		Key:                  "flagkey",
+		Version:              11,
+		TrackEvents:          true,
+		DebugEventsUntilDate: &futureTime,
+	}
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, intPtr(1), value, nil, nil)
+	ep.SendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	if assert.Equal(t, 4, len(output)) {
+		assertIndexEventMatches(t, fe, userJson, output[0])
+		assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
+		assertFeatureEventMatches(t, fe, flag, value, true, &userJson, output[2])
+		assertSummaryEventHasCounter(t, flag, value, 1, output[3])
+	}
+}
+
+func TestDebugModeExpiresBasedOnClientTimeIfClienttTimeIsLater(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.Close()
 
@@ -218,6 +276,7 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Flush()
 	ep.waitUntilInactive()
+	st.getNextRequest()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the server time, but in the past compared to the client.
@@ -232,12 +291,11 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 2, len(output))
-
-	assertIndexEventMatches(t, fe, userJson, output[0])
-
-	// should get a summary event only, not a full feature event
-	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
+	if assert.Equal(t, 2, len(output)) {
+		assertIndexEventMatches(t, fe, userJson, output[0])
+		// should get a summary event only, not a debug event
+		assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
+	}
 }
 
 func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
@@ -253,6 +311,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Flush()
 	ep.waitUntilInactive()
+	st.getNextRequest()
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the client time, but in the past compared to the server.
@@ -267,12 +326,11 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	ep.SendEvent(fe)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 2, len(output))
-
-	assertIndexEventMatches(t, fe, userJson, output[0])
-
-	// should get a summary event only, not a full feature event
-	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
+	if assert.Equal(t, 2, len(output)) {
+		assertIndexEventMatches(t, fe, userJson, output[0])
+		// should get a summary event only, not a debug event
+		assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
+	}
 }
 
 func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
@@ -289,24 +347,20 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 		Version:     22,
 		TrackEvents: true,
 	}
-	variation := 1
 	value := "value"
-	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, &variation, value, nil, nil)
-	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
+	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, intPtr(1), value, nil, nil)
+	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe1)
 	ep.SendEvent(fe2)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 4, len(output))
-
-	assertIndexEventMatches(t, fe1, userJson, output[0])
-
-	assertFeatureEventMatches(t, fe1, flag1, value, epDefaultUser, false, false, output[1])
-
-	assertFeatureEventMatches(t, fe2, flag2, value, epDefaultUser, false, false, output[2])
-
-	assertSummaryEventHasCounter(t, flag1, value, 1, output[3])
-	assertSummaryEventHasCounter(t, flag2, value, 1, output[3])
+	if assert.Equal(t, 4, len(output)) {
+		assertIndexEventMatches(t, fe1, userJson, output[0])
+		assertFeatureEventMatches(t, fe1, flag1, value, false, nil, output[1])
+		assertFeatureEventMatches(t, fe2, flag2, value, false, nil, output[2])
+		assertSummaryEventHasCounter(t, flag1, value, 1, output[3])
+		assertSummaryEventHasCounter(t, flag2, value, 1, output[3])
+	}
 }
 
 func TestNonTrackedEventsAreSummarized(t *testing.T) {
@@ -323,25 +377,24 @@ func TestNonTrackedEventsAreSummarized(t *testing.T) {
 		Version:     22,
 		TrackEvents: false,
 	}
-	variation := 1
 	value := "value"
-	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, &variation, value, nil, nil)
-	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
-	fe3 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, &variation, value, nil, nil)
+	fe1 := NewFeatureRequestEvent(flag1.Key, &flag1, epDefaultUser, intPtr(1), value, nil, nil)
+	fe2 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, intPtr(1), value, nil, nil)
+	fe3 := NewFeatureRequestEvent(flag2.Key, &flag2, epDefaultUser, intPtr(1), value, nil, nil)
 	ep.SendEvent(fe1)
 	ep.SendEvent(fe2)
 	ep.SendEvent(fe3)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 2, len(output))
+	if assert.Equal(t, 2, len(output)) {
+		assertIndexEventMatches(t, fe1, userJson, output[0])
 
-	assertIndexEventMatches(t, fe1, userJson, output[0])
-
-	seo := output[1]
-	assertSummaryEventHasCounter(t, flag1, value, 1, seo)
-	assertSummaryEventHasCounter(t, flag2, value, 2, seo)
-	assert.Equal(t, float64(fe1.CreationDate), seo["startDate"])
-	assert.Equal(t, float64(fe2.CreationDate), seo["endDate"])
+		seo := output[1]
+		assertSummaryEventHasCounter(t, flag1, value, 1, seo)
+		assertSummaryEventHasCounter(t, flag2, value, 2, seo)
+		assert.Equal(t, float64(fe1.CreationDate), seo["startDate"])
+		assert.Equal(t, float64(fe2.CreationDate), seo["endDate"])
+	}
 }
 
 func TestCustomEventIsQueuedWithUser(t *testing.T) {
@@ -355,19 +408,19 @@ func TestCustomEventIsQueuedWithUser(t *testing.T) {
 	ep.SendEvent(ce)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 2, len(output))
+	if assert.Equal(t, 2, len(output)) {
+		assertIndexEventMatches(t, ce, userJson, output[0])
 
-	assertIndexEventMatches(t, ce, userJson, output[0])
-
-	ceo := output[1]
-	expected := map[string]interface{}{
-		"kind":         "custom",
-		"creationDate": float64(ce.CreationDate),
-		"key":          ce.Key,
-		"data":         data,
-		"userKey":      *epDefaultUser.Key,
+		ceo := output[1]
+		expected := map[string]interface{}{
+			"kind":         "custom",
+			"creationDate": float64(ce.CreationDate),
+			"key":          ce.Key,
+			"data":         data,
+			"userKey":      *epDefaultUser.Key,
+		}
+		assert.Equal(t, expected, ceo)
 	}
-	assert.Equal(t, expected, ceo)
 }
 
 func TestCustomEventCanContainInlineUser(t *testing.T) {
@@ -383,17 +436,17 @@ func TestCustomEventCanContainInlineUser(t *testing.T) {
 	ep.SendEvent(ce)
 
 	output := flushAndGetEvents(ep, st)
-	assert.Equal(t, 1, len(output))
-
-	ceo := output[0]
-	expected := map[string]interface{}{
-		"kind":         "custom",
-		"creationDate": float64(ce.CreationDate),
-		"key":          ce.Key,
-		"data":         data,
-		"user":         jsonMap(epDefaultUser),
+	if assert.Equal(t, 1, len(output)) {
+		ceo := output[0]
+		expected := map[string]interface{}{
+			"kind":         "custom",
+			"creationDate": float64(ce.CreationDate),
+			"key":          ce.Key,
+			"data":         data,
+			"user":         jsonMap(epDefaultUser),
+		}
+		assert.Equal(t, expected, ceo)
 	}
-	assert.Equal(t, expected, ceo)
 }
 
 func TestClosingEventProcessorForcesSynchronousFlush(t *testing.T) {
@@ -404,9 +457,10 @@ func TestClosingEventProcessorForcesSynchronousFlush(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Close()
 
-	output := getEventsFromLastRequest(st)
-	assert.Equal(t, 1, len(output))
-	assertIdentifyEventMatches(t, ie, userJson, output[0])
+	output := getEventsFromRequest(st)
+	if assert.Equal(t, 1, len(output)) {
+		assertIdentifyEventMatches(t, ie, userJson, output[0])
+	}
 }
 
 func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
@@ -416,7 +470,8 @@ func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	assert.Nil(t, st.messageSent)
+	msg := st.getNextRequest()
+	assert.Nil(t, msg)
 }
 
 func TestSdkKeyIsSent(t *testing.T) {
@@ -428,7 +483,8 @@ func TestSdkKeyIsSent(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
+	msg := st.getNextRequest()
+	assert.Equal(t, sdkKey, msg.Header.Get("Authorization"))
 }
 
 func TestUserAgentIsSent(t *testing.T) {
@@ -442,7 +498,8 @@ func TestUserAgentIsSent(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	assert.Equal(t, config.UserAgent, st.messageSent.Header.Get("User-Agent"))
+	msg := st.getNextRequest()
+	assert.Equal(t, config.UserAgent, msg.Header.Get("User-Agent"))
 }
 
 func jsonMap(o interface{}) map[string]interface{} {
@@ -472,7 +529,7 @@ func assertIndexEventMatches(t *testing.T, sourceEvent Event, encodedUser map[st
 }
 
 func assertFeatureEventMatches(t *testing.T, sourceEvent FeatureRequestEvent, flag FeatureFlag,
-	value interface{}, user User, debug bool, inlineUser bool, output map[string]interface{}) {
+	value interface{}, debug bool, inlineUser *map[string]interface{}, output map[string]interface{}) {
 	kind := "feature"
 	if debug {
 		kind = "debug"
@@ -485,36 +542,39 @@ func assertFeatureEventMatches(t *testing.T, sourceEvent FeatureRequestEvent, fl
 		"value":        value,
 		"default":      nil,
 	}
-	if inlineUser {
-		expected["user"] = jsonMap(user)
+	if inlineUser == nil {
+		expected["userKey"] = *sourceEvent.User.Key
 	} else {
-		expected["userKey"] = *user.Key
+		expected["user"] = *inlineUser
 	}
 	assert.Equal(t, expected, output)
 }
 
-func assertSummaryEventHasFlag(t *testing.T, flag FeatureFlag, output map[string]interface{}) {
-	assert.Equal(t, "summary", output["kind"])
-	flags, _ := output["features"].(map[string]interface{})
-	assert.NotNil(t, flags)
-	assert.NotNil(t, flags[flag.Key])
+func assertSummaryEventHasFlag(t *testing.T, flag FeatureFlag, output map[string]interface{}) bool {
+	if assert.Equal(t, "summary", output["kind"]) {
+		flags, _ := output["features"].(map[string]interface{})
+		return assert.NotNil(t, flags) && assert.NotNil(t, flags[flag.Key])
+	}
+	return false
 }
 
 func assertSummaryEventHasCounter(t *testing.T, flag FeatureFlag, value interface{}, count int, output map[string]interface{}) {
-	assertSummaryEventHasFlag(t, flag, output)
-	f, _ := output["features"].(map[string]interface{})[flag.Key].(map[string]interface{})
-	assert.NotNil(t, f)
-	expected := map[string]interface{}{
-		"value":   value,
-		"count":   float64(count),
-		"version": float64(flag.Version),
+	if assertSummaryEventHasFlag(t, flag, output) {
+		f, _ := output["features"].(map[string]interface{})[flag.Key].(map[string]interface{})
+		assert.NotNil(t, f)
+		expected := map[string]interface{}{
+			"value":   value,
+			"count":   float64(count),
+			"version": float64(flag.Version),
+		}
+		assert.Contains(t, f["counters"], expected)
 	}
-	assert.Contains(t, f["counters"], expected)
 }
 
 func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport) {
 	transport := &stubTransport{
-		statusCode: 200,
+		statusCode:  200,
+		messageSent: make(chan *http.Request, 100),
 	}
 	client := &http.Client{
 		Transport: transport,
@@ -525,14 +585,15 @@ func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport
 func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) []map[string]interface{} {
 	ep.Flush()
 	ep.waitUntilInactive()
-	return getEventsFromLastRequest(st)
+	return getEventsFromRequest(st)
 }
 
-func getEventsFromLastRequest(st *stubTransport) (output []map[string]interface{}) {
-	if st.messageSent == nil || st.messageSent.Body == nil {
+func getEventsFromRequest(st *stubTransport) (output []map[string]interface{}) {
+	msg := st.getNextRequest()
+	if msg == nil {
 		return
 	}
-	bytes, err := ioutil.ReadAll(st.messageSent.Body)
+	bytes, err := ioutil.ReadAll(msg.Body)
 	if err != nil {
 		return
 	}
@@ -541,7 +602,7 @@ func getEventsFromLastRequest(st *stubTransport) (output []map[string]interface{
 }
 
 func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	t.messageSent = request
+	t.messageSent <- request
 	if t.error != nil {
 		return nil, t.error
 	}
@@ -555,4 +616,13 @@ func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		resp.Header.Add("Date", ts.Format(http.TimeFormat))
 	}
 	return &resp, nil
+}
+
+func (t *stubTransport) getNextRequest() *http.Request {
+	select {
+	case msg := <-t.messageSent:
+		return msg
+	default:
+		return nil
+	}
 }
