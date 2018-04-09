@@ -17,8 +17,6 @@ func (uf userFilter) scrubUser(user User) *User {
 		return &user
 	}
 
-	user.PrivateAttributes = nil
-
 	isPrivate := map[string]bool{}
 	for _, n := range uf.globalPrivateAttributes {
 		isPrivate[n] = true
@@ -26,6 +24,13 @@ func (uf userFilter) scrubUser(user User) *User {
 	for _, n := range user.PrivateAttributeNames {
 		isPrivate[n] = true
 	}
+	user.PrivateAttributeNames = nil // this property is not used in the output schema for events
+	user.PrivateAttributes = nil     // see below
+	// Because we're only resetting these properties if we're going to proceed with the scrubbing logic, it is
+	// possible to pass an already-scrubbed user to this function (with, potentially, some attribute names in
+	// PrivateAttributes) and get back the same object, as long as the configuration does not have private
+	// attributes enabled. This allows us to reuse the event processor code in ld-relay, where we may have to
+	// reprocess events that have already been through the scrubbing process.
 
 	if user.Custom != nil {
 		var custom = map[string]interface{}{}
