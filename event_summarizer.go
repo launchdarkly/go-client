@@ -16,7 +16,7 @@ type eventSummary struct {
 
 type counterKey struct {
 	key       string
-	variation interface{}
+	variation int
 	version   int
 }
 
@@ -56,7 +56,10 @@ func (s *eventSummarizer) summarizeEvent(evt Event) {
 		return
 	}
 
-	key := counterKey{key: fe.Key, variation: fe.Variation}
+	key := counterKey{key: fe.Key}
+	if fe.Variation != nil {
+		key.variation = *fe.Variation
+	}
 	if fe.Version != nil {
 		key.version = *fe.Version
 	}

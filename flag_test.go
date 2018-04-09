@@ -88,7 +88,7 @@ func TestFlagReturnsOffVariationAndEventIfPrerequisiteIsNotMet(t *testing.T) {
 	assert.Equal(t, f1.Key, e.Key)
 	assert.Equal(t, "nogo", e.Value)
 	assert.Equal(t, intPtr(f1.Version), e.Version)
-	assert.Equal(t, 0, e.Variation)
+	assert.Equal(t, intPtr(0), e.Variation)
 	assert.Equal(t, strPtr(f0.Key), e.PrereqOf)
 }
 
@@ -121,7 +121,7 @@ func TestFlagReturnsFallthroughVariationAndEventIfPrerequisiteIsMetAndThereAreNo
 	e := events[0]
 	assert.Equal(t, f1.Key, e.Key)
 	assert.Equal(t, "go", e.Value)
-	assert.Equal(t, 1, e.Variation)
+	assert.Equal(t, intPtr(1), e.Variation)
 	assert.Equal(t, intPtr(f1.Version), e.Version)
 	assert.Equal(t, strPtr(f0.Key), e.PrereqOf)
 }
@@ -166,14 +166,14 @@ func TestMultipleLevelsOfPrerequisiteProduceMultipleEvents(t *testing.T) {
 	e0 := events[0]
 	assert.Equal(t, f2.Key, e0.Key)
 	assert.Equal(t, "go", e0.Value)
-	assert.Equal(t, 1, e0.Variation)
+	assert.Equal(t, intPtr(1), e0.Variation)
 	assert.Equal(t, intPtr(f2.Version), e0.Version)
 	assert.Equal(t, strPtr(f1.Key), e0.PrereqOf)
 
 	e1 := events[1]
 	assert.Equal(t, f1.Key, e1.Key)
 	assert.Equal(t, "go", e1.Value)
-	assert.Equal(t, 1, e1.Variation)
+	assert.Equal(t, intPtr(1), e1.Variation)
 	assert.Equal(t, intPtr(f1.Version), e1.Version)
 	assert.Equal(t, strPtr(f0.Key), e1.PrereqOf)
 }
