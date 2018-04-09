@@ -46,7 +46,7 @@ const (
 )
 
 type stubTransport struct {
-	messageSent *http.Request
+	messageSent chan *http.Request
 	statusCode  int
 	serverTime  uint64
 	error       error
@@ -124,8 +124,7 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
 
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, false, output[1])
-
+	assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
 
@@ -150,7 +149,7 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 
 	assertIndexEventMatches(t, fe, filteredUserJson, output[0])
 
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, false, output[1])
+	assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
 
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
@@ -174,12 +173,12 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
 
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, false, true, output[0])
+	assertFeatureEventMatches(t, fe, flag, value, false, &userJson, output[0])
 
 	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
 }
 
-func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
+func TestDebugEventIsAddedIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.Close()
 
@@ -200,12 +199,40 @@ func TestEventKindIsDebugIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
 
-	assertFeatureEventMatches(t, fe, flag, value, epDefaultUser, true, false, output[1])
+	assertFeatureEventMatches(t, fe, flag, value, true, &userJson, output[1])
 
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
 
-func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
+func TestEventCanBeBothTrackedAndDebugged(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.Close()
+
+	futureTime := now() + 1000000
+	flag := FeatureFlag{
+		Key:                  "flagkey",
+		Version:              11,
+		TrackEvents:          true,
+		DebugEventsUntilDate: &futureTime,
+	}
+	variation := 1
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	ep.SendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 4, len(output))
+
+	assertIndexEventMatches(t, fe, userJson, output[0])
+
+	assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
+
+	assertFeatureEventMatches(t, fe, flag, value, true, &userJson, output[2])
+
+	assertSummaryEventHasCounter(t, flag, value, 1, output[3])
+}
+
+func TestDebugModeExpiresBasedOnClientTimeIfClienttTimeIsLater(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.Close()
 
@@ -218,6 +245,7 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Flush()
 	ep.waitUntilInactive()
+	getLastRequest(st)
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the server time, but in the past compared to the client.
@@ -236,7 +264,7 @@ func TestDebugModeExpiresBasedOnCurrentTimeIfCurrentTimeIsLater(t *testing.T) {
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
 
-	// should get a summary event only, not a full feature event
+	// should get a summary event only, not a debug event
 	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
 }
 
@@ -253,6 +281,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 	ep.SendEvent(ie)
 	ep.Flush()
 	ep.waitUntilInactive()
+	getLastRequest(st)
 
 	// Now send an event with debug mode on, with a "debug until" time that is further in
 	// the future than the client time, but in the past compared to the server.
@@ -271,7 +300,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
 
-	// should get a summary event only, not a full feature event
+	// should get a summary event only, not a debug event
 	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
 }
 
@@ -301,9 +330,9 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 
 	assertIndexEventMatches(t, fe1, userJson, output[0])
 
-	assertFeatureEventMatches(t, fe1, flag1, value, epDefaultUser, false, false, output[1])
+	assertFeatureEventMatches(t, fe1, flag1, value, false, nil, output[1])
 
-	assertFeatureEventMatches(t, fe2, flag2, value, epDefaultUser, false, false, output[2])
+	assertFeatureEventMatches(t, fe2, flag2, value, false, nil, output[2])
 
 	assertSummaryEventHasCounter(t, flag1, value, 1, output[3])
 	assertSummaryEventHasCounter(t, flag2, value, 1, output[3])
@@ -416,7 +445,8 @@ func TestNothingIsSentIfThereAreNoEvents(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	assert.Nil(t, st.messageSent)
+	msg := getLastRequest(st)
+	assert.Nil(t, msg)
 }
 
 func TestSdkKeyIsSent(t *testing.T) {
@@ -428,7 +458,8 @@ func TestSdkKeyIsSent(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	assert.Equal(t, sdkKey, st.messageSent.Header.Get("Authorization"))
+	msg := getLastRequest(st)
+	assert.Equal(t, sdkKey, msg.Header.Get("Authorization"))
 }
 
 func TestUserAgentIsSent(t *testing.T) {
@@ -442,7 +473,8 @@ func TestUserAgentIsSent(t *testing.T) {
 	ep.Flush()
 	ep.waitUntilInactive()
 
-	assert.Equal(t, config.UserAgent, st.messageSent.Header.Get("User-Agent"))
+	msg := getLastRequest(st)
+	assert.Equal(t, config.UserAgent, msg.Header.Get("User-Agent"))
 }
 
 func jsonMap(o interface{}) map[string]interface{} {
@@ -472,7 +504,7 @@ func assertIndexEventMatches(t *testing.T, sourceEvent Event, encodedUser map[st
 }
 
 func assertFeatureEventMatches(t *testing.T, sourceEvent FeatureRequestEvent, flag FeatureFlag,
-	value interface{}, user User, debug bool, inlineUser bool, output map[string]interface{}) {
+	value interface{}, debug bool, inlineUser *map[string]interface{}, output map[string]interface{}) {
 	kind := "feature"
 	if debug {
 		kind = "debug"
@@ -485,10 +517,10 @@ func assertFeatureEventMatches(t *testing.T, sourceEvent FeatureRequestEvent, fl
 		"value":        value,
 		"default":      nil,
 	}
-	if inlineUser {
-		expected["user"] = jsonMap(user)
+	if inlineUser == nil {
+		expected["userKey"] = *sourceEvent.User.Key
 	} else {
-		expected["userKey"] = *user.Key
+		expected["user"] = *inlineUser
 	}
 	assert.Equal(t, expected, output)
 }
@@ -514,7 +546,8 @@ func assertSummaryEventHasCounter(t *testing.T, flag FeatureFlag, value interfac
 
 func createEventProcessor(config Config) (*defaultEventProcessor, *stubTransport) {
 	transport := &stubTransport{
-		statusCode: 200,
+		statusCode:  200,
+		messageSent: make(chan *http.Request, 100),
 	}
 	client := &http.Client{
 		Transport: transport,
@@ -528,11 +561,21 @@ func flushAndGetEvents(ep *defaultEventProcessor, st *stubTransport) []map[strin
 	return getEventsFromLastRequest(st)
 }
 
+func getLastRequest(st *stubTransport) *http.Request {
+	select {
+	case msg := <-st.messageSent:
+		return msg
+	default:
+		return nil
+	}
+}
+
 func getEventsFromLastRequest(st *stubTransport) (output []map[string]interface{}) {
-	if st.messageSent == nil || st.messageSent.Body == nil {
+	msg := getLastRequest(st)
+	if msg == nil {
 		return
 	}
-	bytes, err := ioutil.ReadAll(st.messageSent.Body)
+	bytes, err := ioutil.ReadAll(msg.Body)
 	if err != nil {
 		return
 	}
@@ -541,7 +584,7 @@ func getEventsFromLastRequest(st *stubTransport) (output []map[string]interface{
 }
 
 func (t *stubTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	t.messageSent = request
+	t.messageSent <- request
 	if t.error != nil {
 		return nil, t.error
 	}

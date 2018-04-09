@@ -219,11 +219,19 @@ func (ed *eventDispatcher) processEvent(evt Event, buffer *eventBuffer, userKeys
 	// Always record the event in the summarizer.
 	buffer.addToSummary(evt)
 
-	if ed.shouldTrackFullEvent(evt) {
-		// Sampling interval applies only to fully-tracked events.
-		if ed.config.SamplingInterval == 0 || rand.Int31n(ed.config.SamplingInterval) == 0 {
-			// Queue the event as-is; we'll transform it into an output event when we're flushing
-			// (to avoid doing that work on our main goroutine).
+	// Conditionally add the event to the payload. Feature events may be added twice, once for
+	// the event (if tracked) and once for debugging.
+	switch evt := evt.(type) {
+	case FeatureRequestEvent:
+		if evt.TrackEvents && ed.shouldSampleEvent() {
+			buffer.addEvent(evt)
+		}
+		if ed.shouldDebugEvent(&evt) {
+			evt.Debug = true
+			buffer.addEvent(evt)
+		}
+	default:
+		if ed.shouldSampleEvent() {
 			buffer.addEvent(evt)
 		}
 	}
@@ -237,29 +245,22 @@ func noticeUser(userKeys *lruCache, user *User) bool {
 	return userKeys.add(*user.Key)
 }
 
-func (ed *eventDispatcher) shouldTrackFullEvent(evt Event) bool {
-	switch evt := evt.(type) {
-	case FeatureRequestEvent:
-		if evt.TrackEvents {
-			return true
-		}
-		if evt.DebugEventsUntilDate != nil {
-			// The "last known past time" comes from the last HTTP response we got from the server.
-			// In case the client's time is set wrong, at least we know that any expiration date
-			// earlier than that point is definitely in the past.  If there's any discrepancy, we
-			// want to err on the side of cutting off event debugging sooner.
-			ed.stateLock.Lock() // This should be done infrequently since it's only for debug events
-			defer ed.stateLock.Unlock()
-			if *evt.DebugEventsUntilDate > ed.lastKnownPastTime &&
-				*evt.DebugEventsUntilDate > now() {
-				return true
-			}
-		}
+func (ed *eventDispatcher) shouldSampleEvent() bool {
+	return ed.config.SamplingInterval == 0 || rand.Int31n(ed.config.SamplingInterval) == 0
+}
+
+func (ed *eventDispatcher) shouldDebugEvent(evt *FeatureRequestEvent) bool {
+	if evt.DebugEventsUntilDate == nil {
 		return false
-	default:
-		// Custom and identify events are always included in full
-		return true
 	}
+	// The "last known past time" comes from the last HTTP response we got from the server.
+	// In case the client's time is set wrong, at least we know that any expiration date
+	// earlier than that point is definitely in the past.  If there's any discrepancy, we
+	// want to err on the side of cutting off event debugging sooner.
+	ed.stateLock.Lock() // This should be done infrequently since it's only for debug events
+	defer ed.stateLock.Unlock()
+	return *evt.DebugEventsUntilDate > ed.lastKnownPastTime &&
+		*evt.DebugEventsUntilDate > now()
 }
 
 // Signal that we would like to do a flush as soon as possible.
