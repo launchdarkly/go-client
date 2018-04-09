@@ -101,7 +101,6 @@ func TestFeatureEventIsSummarizedAndNotTrackedByDefault(t *testing.T) {
 	assert.Equal(t, 2, len(output))
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
-
 	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
 }
 
@@ -123,7 +122,6 @@ func TestIndividualFeatureEventIsQueuedWhenTrackEventsIsTrue(t *testing.T) {
 	assert.Equal(t, 3, len(output))
 
 	assertIndexEventMatches(t, fe, userJson, output[0])
-
 	assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
@@ -148,9 +146,7 @@ func TestUserDetailsAreScrubbedInIndexEvent(t *testing.T) {
 	assert.Equal(t, 3, len(output))
 
 	assertIndexEventMatches(t, fe, filteredUserJson, output[0])
-
 	assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
-
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
 
@@ -172,9 +168,7 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
-
 	assertFeatureEventMatches(t, fe, flag, value, false, &userJson, output[0])
-
 	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
 }
 
@@ -196,11 +190,8 @@ func TestDebugEventIsAddedIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 3, len(output))
-
 	assertIndexEventMatches(t, fe, userJson, output[0])
-
 	assertFeatureEventMatches(t, fe, flag, value, true, &userJson, output[1])
-
 	assertSummaryEventHasCounter(t, flag, value, 1, output[2])
 }
 
@@ -222,13 +213,9 @@ func TestEventCanBeBothTrackedAndDebugged(t *testing.T) {
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 4, len(output))
-
 	assertIndexEventMatches(t, fe, userJson, output[0])
-
 	assertFeatureEventMatches(t, fe, flag, value, false, nil, output[1])
-
 	assertFeatureEventMatches(t, fe, flag, value, true, &userJson, output[2])
-
 	assertSummaryEventHasCounter(t, flag, value, 1, output[3])
 }
 
@@ -261,9 +248,7 @@ func TestDebugModeExpiresBasedOnClientTimeIfClienttTimeIsLater(t *testing.T) {
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
-
 	assertIndexEventMatches(t, fe, userJson, output[0])
-
 	// should get a summary event only, not a debug event
 	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
 }
@@ -297,9 +282,7 @@ func TestDebugModeExpiresBasedOnServerTimeIfServerTimeIsLater(t *testing.T) {
 
 	output := flushAndGetEvents(ep, st)
 	assert.Equal(t, 2, len(output))
-
 	assertIndexEventMatches(t, fe, userJson, output[0])
-
 	// should get a summary event only, not a debug event
 	assertSummaryEventHasCounter(t, flag, nil, 1, output[1])
 }
@@ -329,11 +312,8 @@ func TestTwoFeatureEventsForSameUserGenerateOnlyOneIndexEvent(t *testing.T) {
 	assert.Equal(t, 4, len(output))
 
 	assertIndexEventMatches(t, fe1, userJson, output[0])
-
 	assertFeatureEventMatches(t, fe1, flag1, value, false, nil, output[1])
-
 	assertFeatureEventMatches(t, fe2, flag2, value, false, nil, output[2])
-
 	assertSummaryEventHasCounter(t, flag1, value, 1, output[3])
 	assertSummaryEventHasCounter(t, flag2, value, 1, output[3])
 }
