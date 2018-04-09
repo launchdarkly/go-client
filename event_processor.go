@@ -78,7 +78,9 @@ type syncEventsMessage struct {
 }
 
 const (
-	maxFlushWorkers = 5
+	maxFlushWorkers    = 5
+	eventSchemaHeader  = "X-LaunchDarkly-Event-Schema"
+	currentEventSchema = "2"
 )
 
 func newNullEventProcessor() *nullEventProcessor {
@@ -395,7 +397,7 @@ func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
 	req.Header.Add("Authorization", t.sdkKey)
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("User-Agent", t.userAgent)
-	req.Header.Add("X-LaunchDarkly-Event-Schema", "3")
+	req.Header.Add(eventSchemaHeader, currentEventSchema)
 
 	resp, respErr := t.client.Do(req)
 
