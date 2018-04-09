@@ -172,6 +172,29 @@ func TestFeatureEventCanContainInlineUser(t *testing.T) {
 	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
 }
 
+func TestUserDetailsAreScrubbedInFeatureEvent(t *testing.T) {
+	config := epDefaultConfig
+	config.InlineUsersInEvents = true
+	config.AllAttributesPrivate = true
+	ep, st := createEventProcessor(config)
+	defer ep.Close()
+
+	flag := FeatureFlag{
+		Key:         "flagkey",
+		Version:     11,
+		TrackEvents: true,
+	}
+	variation := 1
+	value := "value"
+	fe := NewFeatureRequestEvent(flag.Key, &flag, epDefaultUser, &variation, value, nil, nil)
+	ep.SendEvent(fe)
+
+	output := flushAndGetEvents(ep, st)
+	assert.Equal(t, 2, len(output))
+	assertFeatureEventMatches(t, fe, flag, value, false, &filteredUserJson, output[0])
+	assertSummaryEventHasCounter(t, flag, value, 1, output[1])
+}
+
 func TestDebugEventIsAddedIfFlagIsTemporarilyInDebugMode(t *testing.T) {
 	ep, st := createEventProcessor(epDefaultConfig)
 	defer ep.Close()
