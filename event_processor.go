@@ -398,7 +398,7 @@ func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
 
 	var resp *http.Response
 	var respErr error
-	for attempt := 0; ; attempt++ {
+	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
 			t.logger.Printf("Will retry posting events after 1 second")
 			time.Sleep(1 * time.Second)
