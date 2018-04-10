@@ -416,12 +416,12 @@ func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
 
 		resp, respErr = t.client.Do(req)
 
-		defer func() {
+		defer func(resp *http.Response) {
 			if resp != nil && resp.Body != nil {
 				ioutil.ReadAll(resp.Body)
 				resp.Body.Close()
 			}
-		}()
+		}(resp)
 
 		if respErr != nil {
 			t.logger.Printf("Unexpected error while sending events: %+v", respErr)
