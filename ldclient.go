@@ -142,7 +142,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 	if config.EventProcessor != nil {
 		client.eventProcessor = config.EventProcessor
 	} else if config.SendEvents {
-		client.eventProcessor = newDefaultEventProcessor(sdkKey, config, nil)
+		client.eventProcessor = NewDefaultEventProcessor(sdkKey, config, nil)
 	} else {
 		client.eventProcessor = newNullEventProcessor()
 	}

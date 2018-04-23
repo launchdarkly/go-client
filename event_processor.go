@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Interface for an object that delivers or stores analytics events.
+// EventProcessor defines the interface for dispatching analytics events.
 type EventProcessor interface {
 	// Records an event asynchronously.
 	SendEvent(Event)
@@ -78,7 +78,9 @@ type syncEventsMessage struct {
 }
 
 const (
-	maxFlushWorkers = 5
+	maxFlushWorkers    = 5
+	eventSchemaHeader  = "X-LaunchDarkly-Event-Schema"
+	currentEventSchema = "2"
 )
 
 func newNullEventProcessor() *nullEventProcessor {
@@ -93,7 +95,10 @@ func (n *nullEventProcessor) Close() error {
 	return nil
 }
 
-func newDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
+// NewDefaultEventProcessor creates an instance of the default implementation of analytics event processing.
+// This is normally only used internally; it is public because the Go SDK code is reused by other LaunchDarkly
+// components.
+func NewDefaultEventProcessor(sdkKey string, config Config, client *http.Client) *defaultEventProcessor {
 	if client == nil {
 		client = &http.Client{}
 	}
@@ -412,7 +417,7 @@ func (t *sendEventsTask) postEvents(outputEvents []interface{}) *http.Response {
 		req.Header.Add("Authorization", t.sdkKey)
 		req.Header.Add("Content-Type", "application/json")
 		req.Header.Add("User-Agent", t.userAgent)
-		req.Header.Add("X-LaunchDarkly-Event-Schema", "3")
+		req.Header.Add(eventSchemaHeader, currentEventSchema)
 
 		resp, respErr = t.client.Do(req)
 
