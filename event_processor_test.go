@@ -502,6 +502,25 @@ func TestUserAgentIsSent(t *testing.T) {
 	assert.Equal(t, config.UserAgent, msg.Header.Get("User-Agent"))
 }
 
+func TestFlushIsRetriedOnceAfter5xxError(t *testing.T) {
+	ep, st := createEventProcessor(epDefaultConfig)
+	defer ep.Close()
+
+	st.statusCode = 503
+
+	ie := NewIdentifyEvent(epDefaultUser)
+	ep.SendEvent(ie)
+	ep.Flush()
+	ep.waitUntilInactive()
+
+	msg := st.getNextRequest()
+	assert.NotNil(t, msg)
+	msg = st.getNextRequest()
+	assert.NotNil(t, msg)
+	msg = st.getNextRequest()
+	assert.Nil(t, msg)
+}
+
 func jsonMap(o interface{}) map[string]interface{} {
 	bytes, _ := json.Marshal(o)
 	var result map[string]interface{}
