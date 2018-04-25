@@ -209,6 +209,35 @@ func TestEvaluatingUnknownFlagSendsEvent(t *testing.T) {
 	assert.Equal(t, expectedEvent, e)
 }
 
+func TestEvaluatingFlagWithNilUserKeySendsEvent(t *testing.T) {
+	flag := featureFlagWithVariations("flagKey", []interface{}{"a", "b"})
+	client := makeTestClient()
+	defer client.Close()
+	client.store.Upsert(Features, flag)
+
+	user := User{Name: strPtr("Bob")}
+	_, err := client.StringVariation(flag.Key, user, "x")
+	assert.Error(t, err)
+
+	events := client.eventProcessor.(*testEventProcessor).events
+
+	assert.Equal(t, 1, len(events))
+	e := events[0].(FeatureRequestEvent)
+	expectedEvent := FeatureRequestEvent{
+		BaseEvent: BaseEvent{
+			CreationDate: e.CreationDate,
+			User:         user,
+		},
+		Key:       flag.Key,
+		Version:   &flag.Version,
+		Value:     "x",
+		Variation: nil,
+		Default:   "x",
+		PrereqOf:  nil,
+	}
+	assert.Equal(t, expectedEvent, e)
+}
+
 func TestEvaluatingFlagWithPrerequisiteSendsPrerequisiteEvent(t *testing.T) {
 	client := makeTestClient()
 	defer client.Close()
