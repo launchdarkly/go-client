@@ -59,6 +59,8 @@ func (s *eventSummarizer) summarizeEvent(evt Event) {
 	key := counterKey{key: fe.Key}
 	if fe.Variation != nil {
 		key.variation = *fe.Variation
+	} else {
+		key.variation = -1
 	}
 	if fe.Version != nil {
 		key.version = *fe.Version
