@@ -80,7 +80,7 @@ type syncEventsMessage struct {
 const (
 	maxFlushWorkers    = 5
 	eventSchemaHeader  = "X-LaunchDarkly-Event-Schema"
-	currentEventSchema = "2"
+	currentEventSchema = "3"
 )
 
 func newNullEventProcessor() *nullEventProcessor {
