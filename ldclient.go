@@ -203,15 +203,16 @@ func (client *LDClient) Initialized() bool {
 
 // Shuts down the LaunchDarkly client. After calling this, the LaunchDarkly client
 // should no longer be used.
-func (client *LDClient) Close() {
+func (client *LDClient) Close() error {
 	client.config.Logger.Println("Closing LaunchDarkly Client")
 	if client.IsOffline() {
-		return
+		return nil
 	}
 	client.eventProcessor.close()
 	if !client.config.UseLdd {
 		client.updateProcessor.Close()
 	}
+	return nil
 }
 
 // Immediately flushes queued events.

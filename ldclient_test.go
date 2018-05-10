@@ -3,6 +3,7 @@ package ldclient
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"testing"
@@ -25,8 +26,10 @@ func TestOfflineModeAlwaysReturnsDefaultValue(t *testing.T) {
 		Stream:        true,
 		Offline:       true,
 	}
+	var closer io.Closer
 	client, _ := MakeCustomClient("api_key", config, 0)
-	defer client.Close()
+	closer = client
+	defer closer.Close()
 	client.config.Offline = true
 	key := "foo"
 	user := User{Key: &key}
