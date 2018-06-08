@@ -20,6 +20,8 @@ const (
 	indirectPatchEvent = "indirect/patch"
 )
 
+var ErrUnauthorized = errors.New("API Key provide doesn't have authorization to access LaunchDarkly")
+
 type streamProcessor struct {
 	store              FeatureStore
 	requestor          *requestor
@@ -57,9 +59,12 @@ func (sp *streamProcessor) Initialized() bool {
 	return sp.isInitialized
 }
 
-func (sp *streamProcessor) Start(closeWhenReady chan<- struct{}) {
+func (sp *streamProcessor) Start() <-chan error {
 	sp.config.Logger.Printf("Starting LaunchDarkly streaming connection")
-	go sp.subscribe(closeWhenReady)
+
+	chanErr := make(chan error)
+	go sp.subscribe(chanErr)
+	return chanErr
 }
 
 func flagKey(path string) (string, error) {
@@ -78,7 +83,7 @@ func segmentKey(path string) (string, error) {
 	return "", errors.New("Not a segment path")
 }
 
-func (sp *streamProcessor) events(closeWhenReady chan<- struct{}) {
+func (sp *streamProcessor) events(chanErr chan<- error) {
 	for {
 		select {
 		case event, ok := <-sp.stream.Events:
@@ -96,7 +101,7 @@ func (sp *streamProcessor) events(closeWhenReady chan<- struct{}) {
 					sp.setInitializedOnce.Do(func() {
 						sp.config.Logger.Printf("Started LaunchDarkly streaming client")
 						sp.isInitialized = true
-						close(closeWhenReady)
+						close(chanErr)
 					})
 				}
 			case patchEvent:
@@ -186,7 +191,7 @@ func newStreamProcessor(sdkKey string, config Config, requestor *requestor) *str
 	return sp
 }
 
-func (sp *streamProcessor) subscribe(closeWhenReady chan<- struct{}) {
+func (sp *streamProcessor) subscribe(chanErr chan<- error) {
 	for {
 		req, _ := http.NewRequest("GET", sp.config.StreamUri+"/all", nil)
 		req.Header.Add("Authorization", sp.sdkKey)
@@ -196,23 +201,23 @@ func (sp *streamProcessor) subscribe(closeWhenReady chan<- struct{}) {
 		if stream, err := es.SubscribeWithRequest("", req); err != nil {
 			sp.config.Logger.Printf("ERROR: Error subscribing to stream: %+v using URL: %s", err, req.URL.String())
 			if sp.checkUnauthorized(err) {
+				chanErr <- ErrUnauthorized
 				return
 			}
 
 			// Halt immediately if we've been closed already
 			select {
 			case <-sp.halt:
+				close(chanErr)
 				return
 			default:
 				time.Sleep(2 * time.Second)
 			}
-
 		} else {
 			sp.stream = stream
 			sp.stream.Logger = sp.config.Logger
 
-			go sp.events(closeWhenReady)
-
+			go sp.events(chanErr)
 			return
 		}
 	}

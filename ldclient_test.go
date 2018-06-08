@@ -13,9 +13,9 @@ import (
 
 type testUpdateProcessor struct{}
 
-func (u testUpdateProcessor) Initialized() bool     { return true }
-func (u testUpdateProcessor) Close() error          { return nil }
-func (u testUpdateProcessor) Start(chan<- struct{}) {}
+func (u testUpdateProcessor) Initialized() bool   { return true }
+func (u testUpdateProcessor) Close() error        { return nil }
+func (u testUpdateProcessor) Start() <-chan error { return make(chan error) }
 
 type testEventProcessor struct {
 	events []Event

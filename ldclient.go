@@ -74,7 +74,7 @@ const MinimumPollInterval = 30 * time.Second
 type UpdateProcessor interface {
 	Initialized() bool
 	Close() error
-	Start(closeWhenReady chan<- struct{})
+	Start() <-chan error
 }
 
 // Provides the default configuration options for the LaunchDarkly client.
@@ -114,8 +114,6 @@ func MakeClient(sdkKey string, waitFor time.Duration) (*LDClient, error) {
 // Creates a new client instance that connects to LaunchDarkly with a custom configuration. The optional duration parameter allows callers to
 // block until the client has connected to LaunchDarkly and is properly initialized.
 func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDClient, error) {
-	closeWhenReady := make(chan struct{})
-
 	config.BaseUri = strings.TrimRight(config.BaseUri, "/")
 	config.EventsUri = strings.TrimRight(config.EventsUri, "/")
 	if config.PollInterval < MinimumPollInterval {
@@ -162,11 +160,15 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 		config.Logger.Println("You should only disable the streaming API if instructed to do so by LaunchDarkly support")
 		client.updateProcessor = newPollingProcessor(config, requestor)
 	}
-	client.updateProcessor.Start(closeWhenReady)
+	errChan := client.updateProcessor.Start()
 	timeout := time.After(waitFor)
 	for {
 		select {
-		case <-closeWhenReady:
+		case err := <-errChan:
+			if err != nil {
+				return nil, err
+			}
+
 			config.Logger.Println("Successfully initialized LaunchDarkly client!")
 			return &client, nil
 		case <-timeout:
@@ -175,7 +177,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 				return &client, ErrInitializationTimeout
 			}
 
-			go func() { <-closeWhenReady }() // Don't block the UpdateProcessor when not waiting
+			go func() { <-errChan }() // Don't block the UpdateProcessor when not waiting
 			return &client, nil
 		}
 	}
