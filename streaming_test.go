@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestStreamProcessor_DoNotBlockInCase401(t *testing.T) {
+func TestStreamProcessor_401ShouldNotBlock(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -20,14 +22,15 @@ func TestStreamProcessor_DoNotBlockInCase401(t *testing.T) {
 		Logger:    log.New(ioutil.Discard, "", 0),
 	}
 
-	sp := newStreamProcessor("key", cfg, nil)
+	sp := newStreamProcessor("sdkKey", cfg, nil)
 
 	closeWhenReady := make(chan struct{})
+
 	sp.subscribe(closeWhenReady)
 
 	select {
 	case <-closeWhenReady:
 	case <-time.After(time.Second):
-		t.Error("it was not expected to block")
+		assert.Fail(t, "Receiving 401 shouldn't block")
 	}
 }

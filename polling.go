@@ -33,6 +33,7 @@ func (pp *pollingProcessor) Start(closeWhenReady chan<- struct{}) {
 			select {
 			case <-pp.quit:
 				pp.config.Logger.Printf("Polling Processor closed.")
+				close(closeWhenReady)
 				return
 			default:
 				then := time.Now()
@@ -44,7 +45,7 @@ func (pp *pollingProcessor) Start(closeWhenReady chan<- struct{}) {
 					})
 				} else {
 					pp.config.Logger.Printf("ERROR: Error when requesting feature updates: %+v", err)
-					if hse, ok := err.(HttpStatusError); ok {
+					if hse, ok := err.(*HttpStatusError); ok {
 						if hse.Code == 401 {
 							pp.config.Logger.Printf("ERROR: Received 401 error, no further polling requests will be made since SDK key is invalid")
 							close(closeWhenReady)
