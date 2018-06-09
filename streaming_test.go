@@ -22,11 +22,11 @@ func TestStreamProcessor_DoNotBlockInCase401(t *testing.T) {
 
 	sp := newStreamProcessor("key", cfg, nil)
 
-	chanErr := make(chan error)
-	go sp.subscribe(chanErr)
+	closeWhenReady := make(chan struct{})
+	sp.subscribe(closeWhenReady)
 
 	select {
-	case <-chanErr:
+	case <-closeWhenReady:
 	case <-time.After(time.Second):
 		t.Error("it was not expected to block")
 	}

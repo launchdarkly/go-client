@@ -26,12 +26,9 @@ func newPollingProcessor(config Config, requestor *requestor) *pollingProcessor 
 	return pp
 }
 
-func (pp *pollingProcessor) Start() <-chan error {
-	chanErr := make(chan error)
-
+func (pp *pollingProcessor) Start(closeWhenReady chan<- struct{}) {
 	pp.config.Logger.Printf("Starting LaunchDarkly polling processor with interval: %+v", pp.config.PollInterval)
 	go func() {
-		defer close(chanErr)
 		for {
 			select {
 			case <-pp.quit:
@@ -43,13 +40,14 @@ func (pp *pollingProcessor) Start() <-chan error {
 				if err == nil {
 					pp.setInitializedOnce.Do(func() {
 						pp.isInitialized = true
-						close(chanErr)
+						close(closeWhenReady)
 					})
 				} else {
 					pp.config.Logger.Printf("ERROR: Error when requesting feature updates: %+v", err)
 					if hse, ok := err.(HttpStatusError); ok {
 						if hse.Code == 401 {
 							pp.config.Logger.Printf("ERROR: Received 401 error, no further polling requests will be made since SDK key is invalid")
+							close(closeWhenReady)
 							return
 						}
 					}
@@ -62,8 +60,6 @@ func (pp *pollingProcessor) Start() <-chan error {
 			}
 		}
 	}()
-
-	return chanErr
 }
 
 func (pp *pollingProcessor) poll() error {

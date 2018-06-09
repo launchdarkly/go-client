@@ -20,8 +20,6 @@ const (
 	indirectPatchEvent = "indirect/patch"
 )
 
-var ErrUnauthorized = errors.New("API Key provide doesn't have authorization to access LaunchDarkly")
-
 type streamProcessor struct {
 	store              FeatureStore
 	requestor          *requestor
@@ -59,12 +57,9 @@ func (sp *streamProcessor) Initialized() bool {
 	return sp.isInitialized
 }
 
-func (sp *streamProcessor) Start() <-chan error {
+func (sp *streamProcessor) Start(closeWhenReady chan<- struct{}) {
 	sp.config.Logger.Printf("Starting LaunchDarkly streaming connection")
-
-	chanErr := make(chan error)
-	go sp.subscribe(chanErr)
-	return chanErr
+	go sp.subscribe(closeWhenReady)
 }
 
 func flagKey(path string) (string, error) {
@@ -83,7 +78,7 @@ func segmentKey(path string) (string, error) {
 	return "", errors.New("Not a segment path")
 }
 
-func (sp *streamProcessor) events(chanErr chan<- error) {
+func (sp *streamProcessor) events(closeWhenReady chan<- struct{}) {
 	for {
 		select {
 		case event, ok := <-sp.stream.Events:
@@ -101,7 +96,7 @@ func (sp *streamProcessor) events(chanErr chan<- error) {
 					sp.setInitializedOnce.Do(func() {
 						sp.config.Logger.Printf("Started LaunchDarkly streaming client")
 						sp.isInitialized = true
-						close(chanErr)
+						close(closeWhenReady)
 					})
 				}
 			case patchEvent:
@@ -170,10 +165,12 @@ func (sp *streamProcessor) events(chanErr chan<- error) {
 						// Until we're able to Close it explicitly here, we won't be able to stop it from trying to reconnect after a 401 error.
 						// sp.stream.Close()
 					})
+					close(closeWhenReady)
 					return
 				}
 			}
 		case <-sp.halt:
+			close(closeWhenReady)
 			return
 		}
 	}
@@ -191,7 +188,7 @@ func newStreamProcessor(sdkKey string, config Config, requestor *requestor) *str
 	return sp
 }
 
-func (sp *streamProcessor) subscribe(chanErr chan<- error) {
+func (sp *streamProcessor) subscribe(closeWhenReady chan<- struct{}) {
 	for {
 		req, _ := http.NewRequest("GET", sp.config.StreamUri+"/all", nil)
 		req.Header.Add("Authorization", sp.sdkKey)
@@ -201,14 +198,14 @@ func (sp *streamProcessor) subscribe(chanErr chan<- error) {
 		if stream, err := es.SubscribeWithRequest("", req); err != nil {
 			sp.config.Logger.Printf("ERROR: Error subscribing to stream: %+v using URL: %s", err, req.URL.String())
 			if sp.checkUnauthorized(err) {
-				chanErr <- ErrUnauthorized
+				close(closeWhenReady)
 				return
 			}
 
 			// Halt immediately if we've been closed already
 			select {
 			case <-sp.halt:
-				close(chanErr)
+				close(closeWhenReady)
 				return
 			default:
 				time.Sleep(2 * time.Second)
@@ -217,7 +214,7 @@ func (sp *streamProcessor) subscribe(chanErr chan<- error) {
 			sp.stream = stream
 			sp.stream.Logger = sp.config.Logger
 
-			go sp.events(chanErr)
+			go sp.events(closeWhenReady)
 			return
 		}
 	}
