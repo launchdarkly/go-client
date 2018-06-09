@@ -79,6 +79,15 @@ func segmentKey(path string) (string, error) {
 }
 
 func (sp *streamProcessor) events(closeWhenReady chan<- struct{}) {
+	var readyOnce sync.Once
+	notifyReady := func() {
+		readyOnce.Do(func() {
+			close(closeWhenReady)
+		})
+	}
+	// Ensure we stop waiting for initialization if we exit, even if initialization fails
+	defer notifyReady()
+
 	for {
 		select {
 		case event, ok := <-sp.stream.Events:
@@ -96,7 +105,7 @@ func (sp *streamProcessor) events(closeWhenReady chan<- struct{}) {
 					sp.setInitializedOnce.Do(func() {
 						sp.config.Logger.Printf("Started LaunchDarkly streaming client")
 						sp.isInitialized = true
-						close(closeWhenReady)
+						notifyReady()
 					})
 				}
 			case patchEvent:
@@ -165,12 +174,10 @@ func (sp *streamProcessor) events(closeWhenReady chan<- struct{}) {
 						// Until we're able to Close it explicitly here, we won't be able to stop it from trying to reconnect after a 401 error.
 						// sp.stream.Close()
 					})
-					close(closeWhenReady)
 					return
 				}
 			}
 		case <-sp.halt:
-			close(closeWhenReady)
 			return
 		}
 	}
@@ -189,13 +196,6 @@ func newStreamProcessor(sdkKey string, config Config, requestor *requestor) *str
 }
 
 func (sp *streamProcessor) subscribe(closeWhenReady chan<- struct{}) {
-	var closer sync.Once
-	closeOnce := func() {
-		closer.Do(func() {
-			close(closeWhenReady)
-		})
-	}
-
 	for {
 		req, _ := http.NewRequest("GET", sp.config.StreamUri+"/all", nil)
 		req.Header.Add("Authorization", sp.sdkKey)
@@ -205,14 +205,14 @@ func (sp *streamProcessor) subscribe(closeWhenReady chan<- struct{}) {
 		if stream, err := es.SubscribeWithRequest("", req); err != nil {
 			sp.config.Logger.Printf("ERROR: Error subscribing to stream: %+v using URL: %s", err, req.URL.String())
 			if sp.checkUnauthorized(err) {
-				closeOnce()
+				close(closeWhenReady)
 				return
 			}
 
 			// Halt immediately if we've been closed already
 			select {
 			case <-sp.halt:
-				closeOnce()
+				close(closeWhenReady)
 				return
 			default:
 				time.Sleep(2 * time.Second)
