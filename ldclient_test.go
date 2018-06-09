@@ -353,7 +353,7 @@ func TestMakeCustomClient_WithFailedInitialization(t *testing.T) {
 		UserKeysFlushInterval: 30 * time.Second,
 	}, time.Second)
 
-	assert.Nil(t, client)
+	assert.NotNil(t, client)
 	assert.Equal(t, err, ErrInitializationFailed)
 }
 

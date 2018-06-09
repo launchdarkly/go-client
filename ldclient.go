@@ -169,7 +169,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 		select {
 		case <-closeWhenReady:
 			if !client.updateProcessor.Initialized() {
-				return nil, ErrInitializationFailed
+				return &client, ErrInitializationFailed
 			}
 
 			config.Logger.Println("Successfully initialized LaunchDarkly client!")
@@ -177,7 +177,7 @@ func MakeCustomClient(sdkKey string, config Config, waitFor time.Duration) (*LDC
 		case <-timeout:
 			if waitFor > 0 {
 				config.Logger.Println("Timeout exceeded when initializing LaunchDarkly client.")
-				return nil, ErrInitializationTimeout
+				return &client, ErrInitializationTimeout
 			}
 
 			go func() { <-closeWhenReady }() // Don't block the UpdateProcessor when not waiting
