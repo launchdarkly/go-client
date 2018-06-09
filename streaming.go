@@ -189,6 +189,13 @@ func newStreamProcessor(sdkKey string, config Config, requestor *requestor) *str
 }
 
 func (sp *streamProcessor) subscribe(closeWhenReady chan<- struct{}) {
+	var closer sync.Once
+	closeOnce := func() {
+		closer.Do(func() {
+			close(closeWhenReady)
+		})
+	}
+
 	for {
 		req, _ := http.NewRequest("GET", sp.config.StreamUri+"/all", nil)
 		req.Header.Add("Authorization", sp.sdkKey)
@@ -198,14 +205,14 @@ func (sp *streamProcessor) subscribe(closeWhenReady chan<- struct{}) {
 		if stream, err := es.SubscribeWithRequest("", req); err != nil {
 			sp.config.Logger.Printf("ERROR: Error subscribing to stream: %+v using URL: %s", err, req.URL.String())
 			if sp.checkUnauthorized(err) {
-				close(closeWhenReady)
+				closeOnce()
 				return
 			}
 
 			// Halt immediately if we've been closed already
 			select {
 			case <-sp.halt:
-				close(closeWhenReady)
+				closeOnce()
 				return
 			default:
 				time.Sleep(2 * time.Second)
