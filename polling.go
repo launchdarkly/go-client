@@ -57,6 +57,7 @@ func (pp *pollingProcessor) Start(closeWhenReady chan<- struct{}) {
 						if hse.Code == 401 {
 							pp.config.Logger.Printf("ERROR: Received 401 error, no further polling requests will be made since SDK key is invalid")
 							notifyReady()
+							return
 						}
 					}
 				}
