@@ -7,6 +7,9 @@ assignees: ''
 
 ---
 
+**Important note**
+As mentioned in the [repository changelog](https://github.com/launchdarkly/go-client/blob/v4/CHANGELOG.md#note-on-future-releases), the `go-client` project has been renamed to `go-server-sdk`. All future releases will be made from the [new repository](https://github.com/launchdarkly/go-server-sdk). Please consider updating your import paths and filing potential requests in that repository's [issue tracker](https://github.com/launchdarkly/go-server-sdk/issues).
+
 **Is this a support request?**
 This issue tracker is maintained by LaunchDarkly SDK developers and is intended for feedback on the SDK code. If you're not sure whether the problem you are having is specifically related to the SDK, or to the LaunchDarkly service overall, it may be more appropriate to contact the LaunchDarkly support team; they can help to investigate the problem and will consult the SDK team if necessary. You can submit a support request by going [here](https://support.launchdarkly.com/) and clicking "submit a request", or by emailing support@launchdarkly.com.
 
