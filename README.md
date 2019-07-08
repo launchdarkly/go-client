@@ -3,6 +3,11 @@ LaunchDarkly SDK for Go
 
 [![Circle CI](https://circleci.com/gh/launchdarkly/go-client.svg?style=svg)](https://circleci.com/gh/launchdarkly/go-client)
 
+Important note
+--------------
+
+As mentioned in the [repository changelog](https://github.com/launchdarkly/go-client/blob/v4/CHANGELOG.md#note-on-future-releases), the `go-client` project has been renamed to `go-server-sdk`. All future releases will be made from the [new repository](https://github.com/launchdarkly/go-server-sdk). Please consider updating your import paths and filing potential requests in that repository's [issue tracker](https://github.com/launchdarkly/go-server-sdk/issues).
+
 Go runtime compatibility
 -------------------------
 
