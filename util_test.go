@@ -72,6 +72,9 @@ func TestParseFloat64(t *testing.T) {
 
 	testParseFloat64(t, 4e-2, .04)
 	testParseFloat64(t, 4.0e-2, .04)
+
+	testParseFloat64(t, "1000", 1000)
+	testParseFloat64(t, "1.0", 1.0)
 }
 
 func testParseFloat64(t *testing.T, input interface{}, expected float64) {
@@ -93,7 +96,6 @@ func TestParseBadNumber(t *testing.T) {
 	testParseBadNumber(t, nil)
 	testParseBadNumber(t, "1,000.0")
 	testParseBadNumber(t, "$1000")
-	testParseBadNumber(t, "1000")
 }
 
 func testParseBadNumber(t *testing.T, input interface{}) {

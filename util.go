@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"time"
 )
 
@@ -62,6 +63,12 @@ func ParseFloat64(input interface{}) *float64 {
 	switch typedInput := input.(type) {
 	case float64:
 		return &typedInput
+	case string:
+		f64, err := strconv.ParseFloat(typedInput, 64)
+		if err != nil {
+			return nil
+		}
+		return &f64
 	default:
 		float64Type := reflect.TypeOf(float64(0))
 		v := reflect.ValueOf(input)
